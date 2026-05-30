@@ -17605,3 +17605,13 @@ input.datetimepicker[data-color="yellow"] + .bootstrap-datetimepicker-widget {
   background: transparent; }
 
 /*# sourceMappingURL=argon.css.map */
+.main-content {
+  margin-left: 16.5rem;
+  padding: 1rem;
+}
+
+@media (max-width: 992px) {
+  .main-content {
+    margin-left: 6.5rem;
+  }
+}

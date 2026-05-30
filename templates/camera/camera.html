@@ -1,491 +1,655 @@
 {% extends 'layouts/base.html' %}
+{% load static %}
+
+{% block stylesheets %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'assets/css/pages/cameras.css' %}">
+{% endblock stylesheets %}
 
 {% block content %}
-<div class="container-fluid mt-5">
-  <div class="row">
+<div class="security-page">
 
-    <div class="col-md-8">
-      <div class="card">
-        <div class="card-header bg-primary text-white">
-          <div class="d-flex justify-content-between align-items-center">
-            <h4 class="card-title mb-0 text-white">Vigilancia en Tiempo Real</h4>
-            <div class="camera-status">
-              <span class="status-indicator inactive" id="cameraStatusIndicator"></span>
-              <span id="cameraStatusText">Verificando...</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-body p-0">
-          <div class="video-container position-relative">
-            <!-- ✅ fps lento: agrega ?fps=8 -->
-            <img src="" class="img-fluid security-feed" id="videoFeed" alt="Video de vigilancia">
-
-
-            <div class="controls-overlay">
-              <button id="snapshotBtn" class="btn btn-sm btn-light me-2" title="Capturar imagen" type="button">
-                <i class="fas fa-camera"></i>
-              </button>
-              <button id="fullscreenBtn" class="btn btn-sm btn-light" title="Pantalla completa" type="button">
-                <i class="fas fa-expand"></i>
-              </button>
-            </div>
-          </div>
-
-          <div class="p-3">
-            <h6 class="text-muted mb-2">📌 Registro en Vivo</h6>
-
-            <!-- ✅ URL correcta (guion bajo) -->
-            <div id="liveLog" class="live-log" data-url="{% url 'live_status' %}">
-              Iniciando sistema...
-            </div>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          <div class="d-flex justify-content-between align-items-center">
-            <div class="legend">
-              <span class="badge bg-success me-2">Rostro reconocido</span>
-              <span class="badge bg-warning me-2">Rostro desconocido</span>
-              <span class="badge bg-danger me-2">Objeto peligroso</span>
-              <span class="badge bg-warning me-2">Falta de EPP</span>
-              <span class="badge bg-warning">EPP incorrecto</span>
-            </div>
-            <small class="text-muted" id="lastUpdate"></small>
-          </div>
-        </div>
-      </div>
+  <!-- Encabezado -->
+  <div class="security-header">
+    <div>
+      <span class="security-eyebrow">Módulo de monitoreo</span>
+      <h2>Centro de Vigilancia Industrial</h2>
+      <p>Supervisión en tiempo real de intrusiones, EPP y eventos peligrosos.</p>
     </div>
 
-    <!-- EVENTOS + REGISTRO FACIAL -->
-    <div class="col-md-4">
-      <div class="card">
-        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-          <h4 class="card-title mb-0">Eventos de Seguridad</h4>
-          <button id="refreshEvents" class="btn btn-sm btn-light" type="button">
+    <div class="security-header-actions">
+      <div class="system-status">
+        <span class="status-dot active"></span>
+        Sistema activo
+      </div>
+
+      <span class="current-date" id="lastUpdate"></span>
+    </div>
+  </div>
+
+  <div class="security-layout">
+
+    <!-- CÁMARA PRINCIPAL -->
+    <section class="camera-panel">
+      <div class="camera-topbar">
+        <div class="camera-title">
+          <a href="#" class="back-link">
+            <i class="fas fa-arrow-left"></i>
+          </a>
+
+          <div>
+            <h4>Vigilancia en Tiempo Real</h4>
+            <span id="cameraLabel">
+  {% if selected_camera %}
+    {{ selected_camera.nombre }} · {{ selected_camera.ubicacion|default:"Sin ubicación" }}
+  {% else %}
+    No hay cámaras configuradas
+  {% endif %}
+</span>
+          </div>
+        </div>
+
+        <div class="camera-actions">
+
+          {% if cameras %}
+          <select id="cameraSelector" class="camera-select">
+            {% for camera in cameras %}
+              <option 
+                value="{% url 'video_feed_camera' camera.id %}"
+                data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}">
+                {{ camera.nombre }}
+              </option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          <button id="snapshotBtn" class="camera-icon-btn" title="Capturar imagen" type="button">
+            <i class="fas fa-camera"></i>
+          </button>
+
+          <button id="fullscreenBtn" class="camera-icon-btn" title="Pantalla completa" type="button">
+            <i class="fas fa-expand"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="camera-screen" id="cameraScreen">
+        {% if selected_camera %}
+          <img 
+            src="{% url 'video_feed_camera' selected_camera.id %}?fps=8" 
+            class="camera-feed" 
+            id="videoFeed" 
+            alt="Video en vivo">
+        {% else %}
+          <div class="no-camera-box">
+            <i class="fas fa-video-slash"></i>
+            <span>No hay cámaras activas configuradas.</span>
+          </div>
+        {% endif %}
+
+        <div class="live-badge">
+          <span></span>
+          En vivo
+        </div>
+
+        <div class="camera-menu">
+          <i class="fas fa-ellipsis-h"></i>
+        </div>
+
+
+      </div>
+
+      <div class="camera-footer">
+        <div class="camera-current-datetime">
+          <i class="fas fa-clock"></i>
+          <span id="cameraDateTime">Cargando fecha y hora...</span>
+        </div>
+      </div>
+
+      <div class="live-log-panel">
+        <div class="section-title">
+          <div>
+            <h5>Registro en Vivo</h5>
+            <span>Actividad detectada por el sistema</span>
+          </div>
+
+          <i class="fas fa-terminal"></i>
+        </div>
+
+        <div id="liveLog" class="live-log" data-url="{% url 'live_status' %}">
+          Iniciando sistema...
+        </div>
+      </div>
+    </section>
+
+    <!-- PANEL DERECHO -->
+    <aside class="side-panel">
+
+      <!-- EVENTOS -->
+      <div class="dashboard-card events-card">
+        <div class="card-custom-header">
+          <div>
+            <h4>Eventos de Seguridad</h4>
+            <span>Últimas detecciones registradas</span>
+          </div>
+
+          <button id="refreshEvents" class="refresh-btn" type="button">
             <i class="fas fa-sync-alt"></i>
           </button>
         </div>
 
-        <div class="card-body p-0">
-          <div class="events-container" id="eventsContainer">
-            <div class="text-center py-3">
-              <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Cargando...</span>
-              </div>
+        <div class="events-container" id="eventsContainer">
+          <div class="loading-box">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Cargando...</span>
             </div>
+
+            <span>Cargando eventos...</span>
           </div>
         </div>
       </div>
 
       {% if request.user.is_authenticated %}
-      <div class="card mt-4">
-        <div class="card-header bg-primary text-white">
-          <h4 class="card-title mb-0">Registro Facial</h4>
+      <!-- REGISTRO FACIAL -->
+      <div class="dashboard-card face-card">
+        <div class="card-custom-header">
+          <div>
+            <h4>Registro Facial</h4>
+            <span>Alta de rostro autorizado</span>
+          </div>
+
+          <i class="fas fa-user-shield header-icon"></i>
         </div>
 
-        <div class="card-body">
-          <form id="registerFaceForm" enctype="multipart/form-data">
-          {% csrf_token %}
-            <div class="mb-3">
-              <label class="form-label">Captura facial</label>
+        <form id="registerFaceForm" enctype="multipart/form-data">
+          <div class="face-capture-preview" id="facePreview">
+            <i class="fas fa-user-circle"></i>
+            <span>Vista previa</span>
+          </div>
 
-              <div class="face-capture-preview mb-2" id="facePreview">
-                <i class="fas fa-user-circle fa-5x text-secondary"></i>
-              </div>
+          <div class="form-group-custom">
+            <label>Nombres</label>
+            <input
+              type="text"
+              class="form-control"
+              id="authorizedNombres"
+              name="nombres"
+              placeholder="Ej. Juan Carlos">
+          </div>
 
-              <input type="file" class="form-control" id="faceImage" name="image" accept="image/*" capture="user">
-              <div class="form-text">Por favor, mira directamente a la cámara con buena iluminación</div>
-            </div>
+          <div class="form-group-custom">
+            <label>Apellidos</label>
+            <input
+              type="text"
+              class="form-control"
+              id="authorizedApellidos"
+              name="apellidos"
+              placeholder="Ej. Pérez Vera">
+          </div>
 
-            <button type="submit" class="btn btn-primary w-100" id="registerBtn">
-              <i class="fas fa-user-plus me-2"></i>Registrar mi rostro
-            </button>
-          </form>
+          <div class="form-group-custom">
+            <label>Celular</label>
+            <input
+              type="text"
+              class="form-control"
+              id="authorizedCelular"
+              name="celular"
+              placeholder="Ej. 0999999999">
+          </div>
 
-          <div id="registrationResult" class="mt-3"></div>
-        </div>
+          <div class="form-group-custom">
+            <label>Correo</label>
+            <input
+              type="email"
+              class="form-control"
+              id="authorizedCorreo"
+              name="correo"
+              placeholder="persona@empresa.com">
+          </div>
+
+          <div class="form-group-custom">
+            <label>Cargo</label>
+            <input
+              type="text"
+              class="form-control"
+              id="authorizedCargo"
+              name="cargo"
+              placeholder="Ej. Operador de planta">
+          </div>
+
+          <div class="form-group-custom">
+            <label>Captura facial</label>
+            <input
+              type="file"
+              class="form-control"
+              id="faceImage"
+              name="image"
+              accept="image/*"
+              capture="user">
+            <small>Procura usar una imagen clara, frontal y con buena iluminación.</small>
+          </div>
+
+          <button type="submit" class="primary-action-btn" id="registerBtn">
+            <i class="fas fa-user-plus me-2"></i>
+            Registrar rostro autorizado
+          </button>
+        </form>
+
+        <div id="registrationResult" class="mt-3"></div>
       </div>
       {% endif %}
-    </div>
 
+    </aside>
   </div>
 </div>
 
+<!-- MODAL EVIDENCIA -->
 <div class="modal fade" id="eventImageModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header bg-primary text-white">
-        <h5 class="modal-title">Evidencia del Evento</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body text-center">
-        <img id="modalEventImage" src="" class="img-fluid" alt="Evidencia">
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-
-<div class="modal fade" id="cameraErrorModal" tabindex="-1" aria-labelledby="cameraErrorModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title" id="cameraErrorModalLabel">
-          <i class="fas fa-video-slash me-2"></i> Cámara no disponible
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content evidence-modal">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-image me-2"></i>
+          Evidencia del Evento
         </h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body" id="cameraErrorMessage">
-        No se pudo acceder a la cámara.
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+
+      <div class="modal-body text-center">
+        <img id="modalEventImage" src="" class="img-fluid rounded-4" alt="Evidencia">
       </div>
     </div>
   </div>
 </div>
-
-{% endblock %}
-
-{% block styles %}
-<style>
-  .video-container { position: relative; background-color: #000; }
-  .security-feed { width: 100%; height: auto; display: block; }
-  .controls-overlay { position: absolute; top: 10px; right: 10px; z-index: 100; }
-
-  .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
-  .status-indicator.active { background-color: #28a745; }
-  .status-indicator.inactive { background-color: #dc3545; }
-
-  .events-container { max-height: 500px; overflow-y: auto; }
-
-  .event-card { border-radius: 0.5rem; margin-bottom: 1rem; padding: 1rem; transition: all 0.3s ease; }
-  .event-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-
-  .event-image-thumb { max-height: 120px; cursor: pointer; transition: transform 0.3s; }
-  .event-image-thumb:hover { transform: scale(1.02); }
-
-  .face-capture-preview {
-    width: 100%;
-    height: 200px;
-    background-color: #f8f9fa;
-    border: 2px dashed #dee2e6;
-    border-radius: 5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-  .face-capture-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
-
-  .live-log{
-    background:#111;
-    color:#0f0;
-    font-family: monospace;
-    padding:10px;
-    height:140px;
-    overflow-y:auto;
-    border-radius:8px;
-    font-size:13px;
-    border: 1px solid rgba(255,255,255,.08);
-  }
-</style>
-{% endblock %}
+{% endblock content %}
 
 {% block javascripts %}
-
 <script>
-$(document).ready(function() {
-  const APP_CONFIG = {
-    urls: {
-      events: '{% url "get_security_events" %}',
-      registerFace: '{% url "register_face" %}',
-      videoFeed: '{% url "video_feed" %}',
-      cameraStatus: '{% url "camera_status" %}'
+  $(document).ready(function () {
+
+    const APP_CONFIG = {
+      urls: {
+        events: '{% url "get_security_events" %}',
+        registerFace: '{% url "register_face" %}',
+        videoFeed: '{% url "video_feed" %}'
+      }
+    };
+
+    $('#cameraSelector').on('change', function () {
+      const selectedOption = $(this).find(':selected');
+      const videoUrl = selectedOption.val();
+      const label = selectedOption.data('label');
+
+      $('#cameraLabel').text(label);
+
+      const finalUrl = videoUrl + '?fps=8&t=' + Date.now();
+
+      $('#videoFeed').attr('src', finalUrl);
+    });
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
     }
-  };
 
-  const csrfToken = $('input[name=csrfmiddlewaretoken]').first().val() || '';
-  let lastLogId = 0;
+    function updateTimestamp() {
+      const now = new Date();
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }
+      const fullDateTime = now.toLocaleString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
 
-  function updateTimestamp() {
-    const now = new Date();
-    $('#lastUpdate').text('Última actualización: ' + now.toLocaleTimeString());
-  }
+      $('#lastUpdate').text('Ultima actualización: ' + fullDateTime);
+      $('#cameraDateTime').text('Fecha y hora actual: ' + fullDateTime);
+    }
 
-  function setCameraStatus(isOnline, text) {
-    const indicator = $('#cameraStatusIndicator');
-    const label = $('#cameraStatusText');
+    setInterval(updateTimestamp, 1000);
+    updateTimestamp();
 
-    indicator.removeClass('active inactive');
-    indicator.addClass(isOnline ? 'active' : 'inactive');
-    label.text(text);
-  }
 
-  function showCameraPopup(message) {
-    $('#cameraErrorMessage').text(message || 'No se pudo acceder a la cámara.');
-    const modal = new bootstrap.Modal(document.getElementById('cameraErrorModal'));
-    modal.show();
-  }
 
-  function startVideoFeed() {
-    $.ajax({
-      url: APP_CONFIG.urls.cameraStatus,
-      method: 'GET',
-      success: function(data) {
-        if (data.success) {
-          const streamUrl = APP_CONFIG.urls.videoFeed + '?fps=12&t=' + new Date().getTime();
-          $('#videoFeed').attr('src', streamUrl);
-          setCameraStatus(true, 'Conectado');
-        } else {
-          $('#videoFeed').attr('src', '');
-          setCameraStatus(false, 'Sin cámara');
-          showCameraPopup(data.message || 'No se encontró una cámara disponible.');
-        }
-      },
-      error: function(xhr) {
-        let message = 'No se encontró una cámara disponible.';
-        if (xhr.responseJSON && xhr.responseJSON.message) {
-          message = xhr.responseJSON.message;
-        }
-        $('#videoFeed').attr('src', '');
-        setCameraStatus(false, 'Sin cámara');
-        showCameraPopup(message);
+    $('#fullscreenBtn').on('click', function () {
+      const cameraScreen = document.getElementById('cameraScreen');
+
+      if (!document.fullscreenElement) {
+        cameraScreen.requestFullscreen().catch(err => {
+          console.log('No se pudo activar pantalla completa:', err);
+        });
+      } else {
+        document.exitFullscreen();
       }
     });
-  }
 
-  function loadSecurityEvents() {
-    $.ajax({
-      url: APP_CONFIG.urls.events,
-      method: 'GET',
-      success: function(data) {
-        renderEvents(data);
-      },
-      error: function(xhr) {
-        console.log("❌ get_security_events error:", xhr.status, xhr.responseText);
-        $('#eventsContainer').html('<div class="alert alert-danger m-3">Error al cargar eventos.</div>');
+    $('#snapshotBtn').on('click', function () {
+      const img = document.getElementById('videoFeed');
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.clientWidth;
+        canvas.height = img.naturalHeight || img.clientHeight;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const link = document.createElement('a');
+        link.download = 'captura-smri.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      } catch (error) {
+        alert('No se pudo capturar la imagen en este momento.');
+        console.log(error);
       }
     });
-  }
 
-  function renderEvents(data) {
-    let html = '';
-    const events = data.events || [];
+    $('#refreshEvents').on('click', loadSecurityEvents);
 
-    if (events.length) {
-      events.forEach(event => {
-        let alertClass = 'secondary';
-        let icon = 'fa-info-circle';
-        let priority = '---';
+    window.showEventImage = function (imageUrl) {
+      $('#modalEventImage').attr('src', imageUrl);
+      const modal = new bootstrap.Modal(document.getElementById('eventImageModal'));
+      modal.show();
+    };
 
-        switch (event.event_type) {
-          case 'face_recognized':
-            alertClass = 'success';
-            icon = 'fa-user-check';
-            priority = 'Baja';
-            break;
+    function loadSecurityEvents() {
+      $.ajax({
+        url: APP_CONFIG.urls.events,
+        method: 'GET',
+        success: function (data) {
+          renderEvents(data);
+        },
+        error: function (xhr) {
+          console.log("❌ get_security_events error:", xhr.status, xhr.responseText);
 
-          case 'face_unknown':
-            alertClass = 'warning';
-            icon = 'fa-user-times';
-            priority = 'Media';
-            break;
-
-          case 'dangerous_object':
-            alertClass = 'danger';
-            icon = 'fa-exclamation-triangle';
-            priority = 'Alta';
-            break;
-
-          case 'ppe_missing':
-            alertClass = 'warning';
-            icon = 'fa-hard-hat';
-            priority = 'Alta';
-            break;
-
-          case 'ppe_incorrect':
-            alertClass = 'warning';
-            icon = 'fa-user-shield';
-            priority = 'Alta';
-            break;
-
-          case 'camera_error':
-            alertClass = 'secondary';
-            icon = 'fa-video-slash';
-            priority = 'Media';
-            break;
+          $('#eventsContainer').html(`
+          <div class="alert alert-danger m-2">
+            Error al cargar eventos.
+          </div>
+        `);
         }
+      });
+    }
 
-        const title = event.event_type_display || event.event_type || 'Evento';
-        const details = event.details || 'Sin detalles adicionales';
+    function renderEvents(data) {
+      let html = '';
+      const events = data.events || [];
 
-        html += `
-          <div class="event-card alert alert-${alertClass}">
-            <div class="d-flex justify-content-between align-items-start">
-              <div>
-                <div class="d-flex align-items-center">
-                  <i class="fas ${icon} me-2"></i>
-                  <strong>${escapeHtml(title)}</strong>
-                  <span class="badge bg-${alertClass} ms-2">${priority}</span>
-                </div>
-                <small class="text-muted d-block mt-1">${escapeHtml(event.timestamp || '')}</small>
+      if (events.length) {
+        events.forEach(event => {
+          let tone = 'secondary';
+          let icon = 'fa-info-circle';
+          let priority = 'Normal';
+
+          switch (event.event_type) {
+            case 'face_recognized':
+              tone = 'success';
+              icon = 'fa-user-check';
+              priority = 'Baja';
+              break;
+
+            case 'face_unknown':
+              tone = 'warning';
+              icon = 'fa-user-times';
+              priority = 'Media';
+              break;
+
+            case 'dangerous_object':
+            case 'unauthorized_access':
+              tone = 'danger';
+              icon = 'fa-exclamation-triangle';
+              priority = 'Alta';
+              break;
+          }
+
+          const title = event.event_type_display || event.event_type || 'Evento';
+          const details = event.details || 'Sin detalles adicionales';
+
+          html += `
+          <div class="event-card event-card--${tone}">
+            <div class="event-main">
+              <div class="event-icon">
+                <i class="fas ${icon}"></i>
               </div>
-              ${event.resolved ? '<span class="badge bg-success">Resuelto</span>' : ''}
+
+              <div class="event-content">
+                <strong>${escapeHtml(title)}</strong>
+                <small>${escapeHtml(event.timestamp || '')}</small>
+                <p>${escapeHtml(details)}</p>
+                <small><i class="fas fa-video"></i> ${escapeHtml(event.camera || 'Sin cámara')}</small>
+              </div>
+
+              <span class="event-priority">${priority}</span>
             </div>
 
-            <p class="mt-2 mb-1">${escapeHtml(details)}</p>
-
             ${event.image_url ? `
-              <div class="mt-2 text-center">
-                <img src="${event.image_url}" class="event-image-thumb img-thumbnail"
-                     alt="Evidencia"
-                     onclick="showEventImage('${event.image_url}')">
-              </div>
+              <img src="${event.image_url}"
+                   class="event-image-thumb"
+                   alt="Evidencia"
+                   onclick="showEventImage('${event.image_url}')">
             ` : ''}
           </div>
         `;
-      });
-    } else {
-      html = '<div class="text-center py-3 text-muted">No hay eventos recientes</div>';
-    }
-
-    $('#eventsContainer').html(html);
-  }
-
-  function appendLiveLog(items) {
-    const box = document.getElementById("liveLog");
-    if (!box || !items || !items.length) return;
-
-    items.forEach(it => {
-      const line = `[${it.ts}] ${it.msg}`;
-      box.innerHTML += escapeHtml(line) + "<br>";
-    });
-
-    box.scrollTop = box.scrollHeight;
-
-    const parts = box.innerHTML.split("<br>");
-    if (parts.length > 180) {
-      box.innerHTML = parts.slice(parts.length - 180).join("<br>");
-    }
-  }
-
-  function loadLiveLog() {
-    const box = document.getElementById("liveLog");
-    if (!box) return;
-
-    const url = box.dataset.url;
-    if (!url) return;
-
-    $.ajax({
-      url: url,
-      method: "GET",
-      data: { after: lastLogId },
-      success: function(data) {
-        const items = data.lines || [];
-        appendLiveLog(items);
-
-        if (typeof data.last_id === "number") {
-          lastLogId = data.last_id;
-        } else if (items.length) {
-          lastLogId = items[items.length - 1].id;
-        }
-      },
-      error: function(xhr) {
-        console.log("❌ live_status error:", xhr.status, xhr.responseText);
+        });
+      } else {
+        html = `
+        <div class="loading-box">
+          <i class="fas fa-shield-alt fa-2x"></i>
+          <span>No hay eventos recientes</span>
+        </div>
+      `;
       }
-    });
-  }
 
-  window.showEventImage = function(imageUrl) {
-    $('#modalEventImage').attr('src', imageUrl);
-    const modal = new bootstrap.Modal(document.getElementById('eventImageModal'));
-    modal.show();
-  };
-
-  $('#videoFeed').on('error', function() {
-    setCameraStatus(false, 'Error de stream');
-    showCameraPopup('No se pudo iniciar el stream de la cámara.');
-  });
-
-  $('#refreshEvents').on('click', loadSecurityEvents);
-
-  $('#faceImage').on('change', function() {
-    const file = this.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      $('#facePreview').html(`<img src="${e.target.result}" class="img-fluid" alt="Preview">`);
-    };
-    reader.readAsDataURL(file);
-  });
-
-  $('#registerFaceForm').on('submit', function(e) {
-    e.preventDefault();
-
-    const fileInput = $('#faceImage')[0];
-    if (!fileInput.files.length) {
-      $('#registrationResult').html('<div class="alert alert-danger">Selecciona una imagen</div>');
-      return;
+      $('#eventsContainer').html(html);
     }
 
-    const formData = new FormData();
-    formData.append('image', fileInput.files[0]);
+    loadSecurityEvents();
+    setInterval(loadSecurityEvents, 5000);
 
-    $('#registerBtn').prop('disabled', true).html('Procesando...');
-    $('#registrationResult').html('');
+    $('#faceImage').on('change', function () {
+      const file = this.files[0];
 
-    $.ajax({
-      url: APP_CONFIG.urls.registerFace,
-      type: 'POST',
-      headers: {
-        'X-CSRFToken': csrfToken
-      },
-      data: formData,
-      processData: false,
-      contentType: false,
-      success: function(data) {
-        if (data.success === true) {
-          $('#registrationResult').html(`<div class="alert alert-success">${escapeHtml(data.message || 'OK')}</div>`);
-          $('#facePreview').html('<i class="fas fa-check-circle fa-5x text-success"></i>');
-        } else {
-          $('#registrationResult').html(`<div class="alert alert-danger">${escapeHtml(data.message || 'Error')}</div>`);
-        }
-      },
-      error: function(xhr) {
-        let message = 'Error en servidor';
-        if (xhr.responseJSON && xhr.responseJSON.message) {
-          message = xhr.responseJSON.message;
-        }
-        $('#registrationResult').html(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
-      },
-      complete: function() {
-        $('#registerBtn')
-          .prop('disabled', false)
-          .html('<i class="fas fa-user-plus me-2"></i>Registrar mi rostro');
-      }
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        $('#facePreview').html(`
+        <img src="${e.target.result}" alt="Preview">
+      `);
+      };
+
+      reader.readAsDataURL(file);
     });
+
+    $('#registerFaceForm').on('submit', function (e) {
+  e.preventDefault();
+
+  const nombres = $('#authorizedNombres').val().trim();
+  const apellidos = $('#authorizedApellidos').val().trim();
+  const celular = $('#authorizedCelular').val().trim();
+  const correo = $('#authorizedCorreo').val().trim();
+  const cargo = $('#authorizedCargo').val().trim();
+
+  const fileInput = $('#faceImage')[0];
+
+  if (!nombres) {
+    $('#registrationResult').html(`
+      <div class="alert alert-danger">
+        Ingresa los nombres de la persona.
+      </div>
+    `);
+    return;
+  }
+
+  if (!apellidos) {
+    $('#registrationResult').html(`
+      <div class="alert alert-danger">
+        Ingresa los apellidos de la persona.
+      </div>
+    `);
+    return;
+  }
+
+  if (!correo) {
+    $('#registrationResult').html(`
+      <div class="alert alert-danger">
+        Ingresa el correo de la persona.
+      </div>
+    `);
+    return;
+  }
+
+  if (!cargo) {
+    $('#registrationResult').html(`
+      <div class="alert alert-danger">
+        Ingresa el cargo de la persona.
+      </div>
+    `);
+    return;
+  }
+
+  if (!fileInput.files.length) {
+    $('#registrationResult').html(`
+      <div class="alert alert-danger">
+        Selecciona una imagen del rostro.
+      </div>
+    `);
+    return;
+  }
+
+  const formData = new FormData();
+
+  formData.append('nombres', nombres);
+  formData.append('apellidos', apellidos);
+  formData.append('celular', celular);
+  formData.append('correo', correo);
+  formData.append('cargo', cargo);
+  formData.append('image', fileInput.files[0]);
+
+  $('#registerBtn')
+    .prop('disabled', true)
+    .html('<i class="fas fa-spinner fa-spin me-2"></i>Procesando...');
+
+  $('#registrationResult').html('');
+
+  $.ajax({
+    url: APP_CONFIG.urls.registerFace,
+    type: 'POST',
+    data: formData,
+    processData: false,
+    contentType: false,
+    success: function (data) {
+      if (data.success === true) {
+        $('#registrationResult').html(`
+          <div class="alert alert-success">
+            ${escapeHtml(data.message || 'Rostro registrado correctamente.')}
+          </div>
+        `);
+
+        $('#registerFaceForm')[0].reset();
+
+        $('#facePreview').html(`
+          <i class="fas fa-check-circle" style="color:#22c55e;"></i>
+          <span>Registro completado</span>
+        `);
+      } else {
+        $('#registrationResult').html(`
+          <div class="alert alert-danger">
+            ${escapeHtml(data.message || 'No se pudo registrar el rostro.')}
+          </div>
+        `);
+      }
+    },
+    error: function (xhr) {
+      console.log("❌ register_face error:", xhr.status, xhr.responseText);
+
+      let message = "Error en servidor.";
+
+      if (xhr.responseJSON && xhr.responseJSON.message) {
+        message = xhr.responseJSON.message;
+      } else if (xhr.responseText) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          message = response.message || response.error || message;
+        } catch (e) {
+          message = "Error en servidor.";
+        }
+      }
+
+      $('#registrationResult').html(`
+        <div class="alert alert-danger">
+          ${escapeHtml(message)}
+        </div>
+      `);
+    },
+    complete: function () {
+      $('#registerBtn')
+        .prop('disabled', false)
+        .html('<i class="fas fa-user-plus me-2"></i>Registrar rostro autorizado');
+    }
   });
-
-  setInterval(updateTimestamp, 1000);
-  updateTimestamp();
-
-  loadSecurityEvents();
-  startVideoFeed();
-  loadLiveLog();
-  setInterval(loadLiveLog, 2000);
 });
+
+    let lastLogId = 0;
+
+    function appendLiveLog(items) {
+      const box = document.getElementById("liveLog");
+
+      if (!box || !items || !items.length) return;
+
+      items.forEach(it => {
+        const line = `[${it.ts}] ${it.msg}`;
+        box.innerHTML += escapeHtml(line) + "<br>";
+      });
+
+      box.scrollTop = box.scrollHeight;
+
+      const parts = box.innerHTML.split("<br>");
+
+      if (parts.length > 180) {
+        box.innerHTML = parts.slice(parts.length - 180).join("<br>");
+      }
+    }
+
+    function loadLiveLog() {
+      const box = document.getElementById("liveLog");
+
+      if (!box) return;
+
+      const url = box.dataset.url;
+
+      if (!url) return;
+
+      $.ajax({
+        url: url,
+        method: "GET",
+        data: { after: lastLogId },
+        success: function (data) {
+          const items = data.lines || [];
+
+          appendLiveLog(items);
+
+          if (typeof data.last_id === "number") {
+            lastLogId = data.last_id;
+          } else if (items.length) {
+            lastLogId = items[items.length - 1].id;
+          }
+        },
+        error: function (xhr) {
+          console.log("❌ live_status error:", xhr.status, xhr.responseText);
+        }
+      });
+    }
+
+    loadLiveLog();
+    setInterval(loadLiveLog, 800);
+
+  });
 </script>
 {% endblock javascripts %}

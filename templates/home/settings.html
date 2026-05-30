@@ -1,0 +1,448 @@
+{% extends 'layouts/base.html' %}
+{% load static %}
+
+{% block title %} Configuración {% endblock title %}
+
+{% block stylesheets %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="{% static 'assets/css/pages/settings.css' %}">
+{% endblock stylesheets %}
+
+{% block content %}
+
+{% csrf_token %}
+
+<div 
+  class="settings-page theme-{{ user_settings.theme_color }}{% if user_settings.dark_mode %} is-dark-mode{% endif %}{% if user_settings.compact_layout %} is-compact-layout{% endif %}"
+  data-update-profile-url="{% url 'settings_update_profile' %}"
+  data-update-email-url="{% url 'settings_update_email' %}"
+  data-update-password-url="{% url 'settings_update_password' %}"
+  data-update-appearance-url="{% url 'settings_update_appearance' %}"
+  data-update-notifications-url="{% url 'settings_update_notifications' %}"
+  data-update-security-url="{% url 'settings_update_security' %}"
+>
+
+  <!-- Header superior -->
+  <div class="settings-topbar">
+    <div class="settings-user">
+      <div class="settings-avatar">
+        {{ request.user.username|first|upper }}
+      </div>
+
+      <div>
+        <h6>{{ request.user.get_full_name|default:request.user.username }}</h6>
+        <span>Ultima actualizacion: {{ user_settings.updated_at|date:"d/m/Y H:i" }}</span>
+      </div>
+    </div>
+
+    <div class="settings-actions">
+      <button class="settings-icon-btn">
+        <i class="bi bi-pencil"></i>
+      </button>
+
+      <button class="settings-icon-btn">
+        <i class="bi bi-trash"></i>
+      </button>
+
+      <button class="settings-icon-btn">
+        <i class="bi bi-person"></i>
+      </button>
+
+      <button class="settings-icon-btn">
+        <i class="bi bi-three-dots"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- Título -->
+  <div class="settings-header">
+    <h1>Configuración</h1>
+
+    <div class="settings-search">
+      <i class="bi bi-search"></i>
+      <input type="text" placeholder="Buscar configuración">
+    </div>
+  </div>
+
+  <div class="settings-layout">
+
+    <!-- Menú lateral -->
+    <aside class="settings-sidebar">
+
+      <div class="settings-menu-group">
+        <span>Cuenta</span>
+
+        <button class="settings-menu-item active" data-section="profile">
+          Perfil de usuario
+        </button>
+
+        <button class="settings-menu-item" data-section="email">
+          Cambiar correo
+        </button>
+
+        <button class="settings-menu-item" data-section="password">
+          Cambiar contraseña
+        </button>
+      </div>
+
+      <div class="settings-menu-group">
+        <span>Personalización</span>
+
+        <button class="settings-menu-item" data-section="appearance">
+          Apariencia
+        </button>
+
+        <button class="settings-menu-item" data-section="darkmode">
+          Modo oscuro
+        </button>
+
+        <button class="settings-menu-item" data-section="notifications">
+          Notificaciones
+        </button>
+      </div>
+
+      <div class="settings-menu-group">
+        <span>Seguridad</span>
+
+        <button class="settings-menu-item" data-section="login">
+          Inicio de sesión
+        </button>
+
+        <button class="settings-menu-item" data-section="devices">
+          Dispositivos
+        </button>
+      </div>
+
+      {% if request.user.is_staff %}
+      <div class="settings-menu-group">
+        <span>Administración</span>
+
+        <button class="settings-menu-item" data-section="admin-panel">
+          Panel administrativo
+        </button>
+
+        <button class="settings-menu-item" data-section="admin-cameras">
+          Gestión de cámaras
+        </button>
+      </div>
+      {% endif %}
+
+    </aside>
+
+    <!-- Contenido principal -->
+    <main class="settings-content">
+
+      <!-- Perfil -->
+      <section class="settings-section active" id="profile">
+        <div class="settings-section-header">
+          <h3>Perfil de usuario</h3>
+          <p>Administra tu información personal dentro del sistema.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-person"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Nombre de usuario</h4>
+            <p>Este nombre será visible dentro del sistema.</p>
+          </div>
+
+          <input class="settings-input" name="username" type="text" value="{{ request.user.username }}" autocomplete="username">
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-card-text"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Nombres</h4>
+            <p>Actualiza tus nombres.</p>
+          </div>
+
+          <input class="settings-input" name="first_name" type="text" value="{{ request.user.first_name }}" autocomplete="given-name">
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-card-text"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Apellidos</h4>
+            <p>Actualiza tus apellidos.</p>
+          </div>
+
+          <input class="settings-input" name="last_name" type="text" value="{{ request.user.last_name }}" autocomplete="family-name">
+        </div>
+      </section>
+
+      <!-- Cambiar correo -->
+      <section class="settings-section" id="email">
+        <div class="settings-section-header">
+          <h3>Cambiar correo</h3>
+          <p>Actualiza el correo electrónico asociado a tu cuenta.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-envelope"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Correo actual</h4>
+            <p>Correo registrado actualmente.</p>
+          </div>
+
+          <input class="settings-input" type="email" value="{{ request.user.email }}" readonly>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-envelope-plus"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Nuevo correo</h4>
+            <p>Ingresa el nuevo correo electrónico.</p>
+          </div>
+
+          <input class="settings-input" name="new_email" type="email" placeholder="nuevo@correo.com" autocomplete="email">
+        </div>
+      </section>
+
+      <!-- Cambiar contraseña -->
+      <section class="settings-section" id="password">
+        <div class="settings-section-header">
+          <h3>Cambiar contraseña</h3>
+          <p>Actualiza tu contraseña para mantener segura tu cuenta.</p>
+        </div>
+
+        <div class="settings-card vertical">
+          <label>Contraseña actual</label>
+          <input class="settings-input full" name="current_password" type="password" placeholder="Ingresa tu contrasena actual" autocomplete="current-password">
+
+          <label>Nueva contraseña</label>
+          <input class="settings-input full" name="new_password" type="password" placeholder="Ingresa tu nueva contrasena" autocomplete="new-password">
+
+          <label>Confirmar contraseña</label>
+          <input class="settings-input full" name="confirm_password" type="password" placeholder="Confirma la nueva contrasena" autocomplete="new-password">
+        </div>
+      </section>
+
+      <!-- Apariencia -->
+      <section class="settings-section" id="appearance">
+        <div class="settings-section-header">
+          <h3>Personalización</h3>
+          <p>Configura la apariencia visual del sistema.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-palette"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Color principal</h4>
+            <p>Selecciona el color principal de la interfaz.</p>
+          </div>
+
+          <select class="settings-input" name="theme_color">
+            <option value="verde" {% if user_settings.theme_color == 'verde' %}selected{% endif %}>Verde</option>
+            <option value="azul" {% if user_settings.theme_color == 'azul' %}selected{% endif %}>Azul</option>
+            <option value="morado" {% if user_settings.theme_color == 'morado' %}selected{% endif %}>Morado</option>
+            <option value="rojo" {% if user_settings.theme_color == 'rojo' %}selected{% endif %}>Rojo</option>
+          </select>
+        </div>
+
+        <div class="settings-card success">
+          <div class="settings-card-icon">
+            <i class="bi bi-layout-text-window"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Diseño compacto</h4>
+            <p>Reduce espacios para mostrar más información.</p>
+          </div>
+
+          <label class="switch">
+            <input name="compact_layout" type="checkbox" {% if user_settings.compact_layout %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Modo oscuro -->
+      <section class="settings-section" id="darkmode">
+        <div class="settings-section-header">
+          <h3>Modo oscuro</h3>
+          <p>Activa o desactiva el tema oscuro del sistema.</p>
+        </div>
+
+        <div class="settings-card success">
+          <div class="settings-card-icon">
+            <i class="bi bi-moon-stars"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Activar modo oscuro</h4>
+            <p>Cambia la interfaz a tonos oscuros para reducir el brillo.</p>
+          </div>
+
+          <label class="switch">
+            <input name="dark_mode" type="checkbox" id="darkModeToggle" {% if user_settings.dark_mode %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Notificaciones -->
+      <section class="settings-section" id="notifications">
+        <div class="settings-section-header">
+          <h3>Notificaciones</h3>
+          <p>Define cómo deseas recibir alertas del sistema.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-bell"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Alertas de seguridad</h4>
+            <p>Recibe alertas cuando se detecten eventos peligrosos.</p>
+          </div>
+
+          <label class="switch">
+            <input name="security_alerts" type="checkbox" {% if user_settings.security_alerts %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-envelope-paper"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Alertas por correo</h4>
+            <p>Enviar notificaciones importantes al correo registrado.</p>
+          </div>
+
+          <label class="switch">
+            <input name="email_alerts" type="checkbox" {% if user_settings.email_alerts %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Inicio de sesión -->
+      <section class="settings-section" id="login">
+        <div class="settings-section-header">
+          <h3>Inicio de sesión</h3>
+          <p>Gestiona opciones relacionadas con el acceso al sistema.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-shield-lock"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Verificación adicional</h4>
+            <p>Solicitar validación extra al iniciar sesión.</p>
+          </div>
+
+          <label class="switch">
+            <input name="extra_verification" type="checkbox" {% if user_settings.extra_verification %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Dispositivos -->
+      <section class="settings-section" id="devices">
+        <div class="settings-section-header">
+          <h3>Dispositivos</h3>
+          <p>Visualiza dispositivos asociados a tu cuenta.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-laptop"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Este dispositivo</h4>
+            <p>Navegador actual en uso.</p>
+          </div>
+
+          <span class="settings-status">Activo</span>
+        </div>
+      </section>
+
+      {% if request.user.is_staff %}
+      <!-- Panel administrativo -->
+      <section class="settings-section" id="admin-panel">
+        <div class="settings-section-header">
+          <h3>Panel administrativo</h3>
+          <p>Accede a las opciones avanzadas de administración del sistema.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-speedometer2"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Django Admin</h4>
+            <p>Gestiona usuarios, cámaras, eventos de seguridad e información interna del sistema.</p>
+          </div>
+
+          <a href="{% url 'admin:index' %}" class="settings-admin-btn">
+            Abrir admin
+          </a>
+        </div>
+      </section>
+
+      <!-- Gestión de cámaras -->
+      <section class="settings-section" id="admin-cameras">
+        <div class="settings-section-header">
+          <h3>Gestión de cámaras</h3>
+          <p>Administra las cámaras configuradas para el sistema de monitoreo industrial.</p>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-icon">
+            <i class="bi bi-camera-video"></i>
+          </div>
+
+          <div class="settings-card-info">
+            <h4>Cámaras del sistema</h4>
+            <p>Registra cámaras locales, cámaras USB o cámaras IP mediante RTSP.</p>
+          </div>
+
+          <a href="{% url 'admin:camera_camera_changelist' %}" class="settings-admin-btn">
+            Administrar cámaras
+          </a>
+        </div>
+      </section>
+      {% endif %}
+
+      <div class="settings-feedback" role="status" aria-live="polite"></div>
+
+      <button class="settings-save-btn" type="button">
+        Guardar cambios
+      </button>
+
+    </main>
+  </div>
+</div>
+
+{% endblock content %}
+
+{% block javascripts %}
+<script src="{% static 'assets/js/settings.js' %}"></script>
+{% endblock javascripts %}

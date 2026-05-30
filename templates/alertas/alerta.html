@@ -1,0 +1,669 @@
+{% extends 'layouts/base.html' %}
+{% load static %}
+
+{% block stylesheets %}
+{{ block.super }}
+<link rel="stylesheet" href="{% static 'assets/css/pages/alerta.css' %}?v=3">
+{% endblock stylesheets %}
+
+{% block content %}
+<div class="alerts-page">
+
+  <section class="alerts-shell">
+
+    <div class="alerts-heading">
+      <div>
+        <span class="alerts-eyebrow">Sistema de monitoreo</span>
+        <h1>Alertas de Seguridad</h1>
+        <p>Revisión de eventos detectados por visión artificial, intrusiones y riesgos industriales.</p>
+      </div>
+
+      <div class="alerts-heading-actions">
+        <button id="toggleSound" class="alerts-btn alerts-btn-soft" type="button">
+          <i class="fas fa-volume-up"></i>
+          Sonido ON
+        </button>
+
+        <button id="refreshAlerts" class="alerts-btn alerts-btn-primary" type="button">
+          <i class="fas fa-sync-alt"></i>
+          Actualizar
+        </button>
+      </div>
+    </div>
+
+    <div class="alerts-summary">
+      <div class="alert-stat">
+        <span>Total</span>
+        <strong id="alertTotal">0</strong>
+      </div>
+
+      <div class="alert-stat alert-stat-danger">
+        <span>Alta prioridad</span>
+        <strong id="alertHigh">0</strong>
+      </div>
+
+      <div class="alert-stat alert-stat-success">
+        <span>Resueltas</span>
+        <strong id="alertResolved">0</strong>
+      </div>
+
+      <div class="alert-stat">
+        <span>Última actualización</span>
+        <strong id="lastUpdate">--:--:--</strong>
+      </div>
+    </div>
+
+    <div class="alerts-card">
+
+      <div class="alerts-toolbar">
+        <div>
+          <h2>Registro de alertas</h2>
+          <p>Listado de eventos recientes detectados por el sistema.</p>
+        </div>
+
+        <div class="alerts-tools">
+          <div class="alerts-search">
+            <i class="fas fa-search"></i>
+            <input id="alertsSearch" type="text" placeholder="Buscar alerta">
+          </div>
+
+          <button class="alerts-filter-btn" type="button">
+            <i class="fas fa-filter"></i>
+            Filtros
+          </button>
+        </div>
+      </div>
+
+      <div class="alerts-table-wrapper">
+        <table class="alerts-table">
+          <thead>
+            <tr>
+              <th>
+                <span class="fake-checkbox"></span>
+              </th>
+              <th>Tipo de alerta</th>
+              <th>Descripción</th>
+              <th>Usuario</th>
+              <th>Fecha/Hora</th>
+              <th>Prioridad</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+
+          <tbody id="alertsContainer">
+            <tr>
+              <td colspan="8">
+                <div class="alerts-loading">
+                  <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                  </div>
+                  <span>Cargando alertas...</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+  </section>
+</div>
+
+<div class="modal fade" id="alertDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content alerts-modal">
+
+      <div class="modal-header">
+        <div>
+          <span class="alerts-eyebrow">Detalle del evento</span>
+          <h5 class="modal-title" id="alertModalTitle">Detalles de Alerta</h5>
+        </div>
+
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="alert-detail-layout">
+
+          <div class="alert-detail-box">
+            <div class="detail-title">
+              <i class="fas fa-info-circle"></i>
+              <h6>Información básica</h6>
+            </div>
+
+            <div id="basicAlertInfo"></div>
+          </div>
+
+          <div class="alert-detail-box">
+            <div class="detail-title">
+              <i class="fas fa-map-marker-alt"></i>
+              <h6>Ubicación</h6>
+            </div>
+
+            <div class="alert-location-box">
+              <i class="fas fa-video"></i>
+              <span>Cámara principal del sistema</span>
+            </div>
+          </div>
+
+          <div class="alert-detail-box alert-detail-box-media">
+            <div class="detail-title">
+              <i class="fas fa-camera"></i>
+              <h6>Evidencia</h6>
+            </div>
+
+            <div id="alertMediaContent" class="alert-media-content">
+              <div class="empty-media">
+                <i class="fas fa-image"></i>
+                <span>No hay evidencia multimedia</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="modal-btn modal-btn-secondary" data-bs-dismiss="modal">
+          Cerrar
+        </button>
+
+        <button type="button" class="modal-btn modal-btn-primary" id="resolveAlertBtn">
+          Marcar como Resuelta
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock content %}
+
+{% block javascripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const ALERT_SYSTEM = {
+    soundEnabled: true,
+    alertSound: null,
+    currentAlerts: [],
+    filteredAlerts: [],
+    currentAlertId: null,
+    modal: null,
+    urls: {
+      alerts: '{% url "get_security_events" %}',
+      resolveTemplate: '{% url "mark_event_resolved" event_id=0 %}'
+    },
+    priorities: {
+      face_recognized: {
+        className: "success",
+        text: "Baja",
+        icon: "fa-user-check"
+      },
+      face_unknown: {
+        className: "warning",
+        text: "Media",
+        icon: "fa-user-xmark"
+      },
+      dangerous_object: {
+        className: "danger",
+        text: "Alta",
+        icon: "fa-triangle-exclamation"
+      },
+      unauthorized_access: {
+        className: "danger",
+        text: "Alta",
+        icon: "fa-shield-halved"
+      },
+      default: {
+        className: "secondary",
+        text: "Normal",
+        icon: "fa-bell"
+      }
+    },
+    types: {
+      face_recognized: {
+        icon: "fa-user-check",
+        label: "Rostro autorizado"
+      },
+      face_unknown: {
+        icon: "fa-user-xmark",
+        label: "Rostro desconocido"
+      },
+      dangerous_object: {
+        icon: "fa-triangle-exclamation",
+        label: "Objeto peligroso"
+      },
+      unauthorized_access: {
+        icon: "fa-shield-halved",
+        label: "Acceso no autorizado"
+      },
+      default: {
+        icon: "fa-bell",
+        label: "Evento"
+      }
+    }
+  };
+
+  const modalElement = document.getElementById("alertDetailModal");
+
+  if (modalElement) {
+    ALERT_SYSTEM.modal = new bootstrap.Modal(modalElement);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function escapeAttr(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function getPriority(eventType) {
+    return ALERT_SYSTEM.priorities[eventType] || ALERT_SYSTEM.priorities.default;
+  }
+
+  function getType(eventType) {
+    return ALERT_SYSTEM.types[eventType] || ALERT_SYSTEM.types.default;
+  }
+
+  function isHighPriority(eventType) {
+    return eventType === "dangerous_object" || eventType === "unauthorized_access";
+  }
+
+  function updateTimestamp() {
+    const now = new Date();
+
+    const value = now.toLocaleString("es-EC", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+
+    const lastUpdate = document.getElementById("lastUpdate");
+
+    if (lastUpdate) {
+      lastUpdate.innerText = value;
+    }
+  }
+
+  function playAlertSound() {
+  if (!ALERT_SYSTEM.soundEnabled) return;
+
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContext();
+
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+
+    gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.45);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.45);
+  } catch (error) {
+    console.warn("No se pudo reproducir el sonido de alerta.", error);
+  }
+}
+
+  function updateSummary(events) {
+    const total = events.length;
+    const high = events.filter(event => isHighPriority(event.event_type) && !event.resolved).length;
+    const resolved = events.filter(event => event.resolved).length;
+
+    document.getElementById("alertTotal").innerText = total;
+    document.getElementById("alertHigh").innerText = high;
+    document.getElementById("alertResolved").innerText = resolved;
+  }
+
+  function loadAlerts() {
+    fetch(ALERT_SYSTEM.urls.alerts)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error("No se pudieron cargar las alertas.");
+        }
+
+        return response.json();
+      })
+      .then(data => {
+        const events = data.events || [];
+
+        const previousIds = new Set(ALERT_SYSTEM.currentAlerts.map(event => event.id));
+
+        const newDangerAlerts = events.filter(event =>
+          !previousIds.has(event.id) &&
+          !event.resolved &&
+          isHighPriority(event.event_type)
+        );
+
+        if (newDangerAlerts.length > 0 && ALERT_SYSTEM.soundEnabled) {
+          playAlertSound();
+        }
+
+        ALERT_SYSTEM.currentAlerts = events;
+        ALERT_SYSTEM.filteredAlerts = events;
+
+        updateSummary(events);
+        applySearchFilter();
+      })
+      .catch(error => {
+        console.error("Error al cargar alertas:", error);
+
+        document.getElementById("alertsContainer").innerHTML = `
+          <tr>
+            <td colspan="8">
+              <div class="alerts-empty alerts-empty-danger">
+                <i class="fas fa-circle-exclamation"></i>
+                <span>Error al cargar alertas.</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .finally(updateTimestamp);
+  }
+
+  function applySearchFilter() {
+    const searchInput = document.getElementById("alertsSearch");
+    const value = searchInput ? searchInput.value.toLowerCase().trim() : "";
+
+    if (!value) {
+      ALERT_SYSTEM.filteredAlerts = ALERT_SYSTEM.currentAlerts;
+    } else {
+      ALERT_SYSTEM.filteredAlerts = ALERT_SYSTEM.currentAlerts.filter(event => {
+        const text = [
+          event.event_type_display,
+          event.event_type,
+          event.details,
+          event.user,
+          event.timestamp
+        ].join(" ").toLowerCase();
+
+        return text.includes(value);
+      });
+    }
+
+    renderAlerts(ALERT_SYSTEM.filteredAlerts);
+  }
+
+  function renderAlerts(events) {
+    const container = document.getElementById("alertsContainer");
+
+    if (!container) return;
+
+    if (events.length === 0) {
+      container.innerHTML = `
+        <tr>
+          <td colspan="8">
+            <div class="alerts-empty">
+              <i class="fas fa-check-circle"></i>
+              <span>No hay alertas para mostrar.</span>
+            </div>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    let html = "";
+
+    events.forEach(event => {
+      const priority = getPriority(event.event_type);
+      const type = getType(event.event_type);
+      const statusText = event.resolved ? "Resuelta" : "Pendiente";
+      const statusClass = event.resolved ? "completed" : "pending";
+
+      html += `
+        <tr class="alerts-row" data-alert-id="${escapeAttr(event.id)}">
+          <td>
+            <span class="fake-checkbox"></span>
+          </td>
+
+          <td>
+            <div class="alert-type-cell">
+              <span class="alert-icon alert-icon-${priority.className}">
+                <i class="fas ${type.icon}"></i>
+              </span>
+
+              <div>
+                <strong>${escapeHtml(event.event_type_display || type.label)}</strong>
+                <small>${escapeHtml(event.event_type || "security_event")}</small>
+              </div>
+            </div>
+          </td>
+
+          <td>
+            <p class="alert-description">${escapeHtml(event.details || "Sin descripción disponible.")}</p>
+          </td>
+
+          <td>
+            <span class="alert-user">${escapeHtml(event.user || "Sistema")}</span>
+          </td>
+
+          <td>
+            <span class="alert-date">${escapeHtml(event.timestamp || "")}</span>
+          </td>
+
+          <td>
+            <span class="priority-badge priority-${priority.className}">
+              <i class="fas ${priority.icon}"></i>
+              ${priority.text}
+            </span>
+          </td>
+
+          <td>
+            <span class="status-badge status-${statusClass}">
+              <i class="fas ${event.resolved ? "fa-check" : "fa-clock"}"></i>
+              ${statusText}
+            </span>
+          </td>
+
+          <td>
+            <div class="row-actions">
+              <button class="icon-action view-alert-btn" type="button" title="Ver detalle" data-id="${escapeAttr(event.id)}">
+                <i class="fas fa-eye"></i>
+              </button>
+
+              ${!event.resolved ? `
+                <button class="icon-action resolve-alert-row-btn" type="button" title="Resolver" data-id="${escapeAttr(event.id)}">
+                  <i class="fas fa-check"></i>
+                </button>
+              ` : ""}
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+
+    container.innerHTML = html;
+
+    container.querySelectorAll(".alerts-row").forEach(row => {
+      row.addEventListener("click", function () {
+        showAlertDetail(this.dataset.alertId);
+      });
+    });
+
+    container.querySelectorAll(".view-alert-btn").forEach(button => {
+      button.addEventListener("click", function (event) {
+        event.stopPropagation();
+        showAlertDetail(this.dataset.id);
+      });
+    });
+
+    container.querySelectorAll(".resolve-alert-row-btn").forEach(button => {
+      button.addEventListener("click", function (event) {
+        event.stopPropagation();
+        ALERT_SYSTEM.currentAlertId = this.dataset.id;
+        resolveCurrentAlert();
+      });
+    });
+  }
+
+  function showAlertDetail(alertId) {
+    const alert = ALERT_SYSTEM.currentAlerts.find(item => String(item.id) === String(alertId));
+
+    if (!alert) return;
+
+    ALERT_SYSTEM.currentAlertId = alert.id;
+
+    const priority = getPriority(alert.event_type);
+    const type = getType(alert.event_type);
+
+    document.getElementById("alertModalTitle").innerText =
+      alert.event_type_display || type.label || "Detalles de Alerta";
+
+    document.getElementById("basicAlertInfo").innerHTML = `
+      <div class="info-line">
+        <span>Tipo</span>
+        <strong>${escapeHtml(alert.event_type_display || type.label)}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Prioridad</span>
+        <strong>
+          <span class="priority-badge priority-${priority.className}">
+            <i class="fas ${priority.icon}"></i>
+            ${priority.text}
+          </span>
+        </strong>
+      </div>
+
+      <div class="info-line">
+        <span>Fecha/Hora</span>
+        <strong>${escapeHtml(alert.timestamp || "")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Usuario</span>
+        <strong>${escapeHtml(alert.user || "Sistema")}</strong>
+      </div>
+
+      <div class="info-line info-line-column">
+        <span>Descripción</span>
+        <strong>${escapeHtml(alert.details || "No hay detalles adicionales.")}</strong>
+      </div>
+    `;
+
+    const mediaContent = document.getElementById("alertMediaContent");
+
+    if (alert.image_url) {
+      mediaContent.innerHTML = `
+        <img src="${escapeAttr(alert.image_url)}" alt="Evidencia de alerta" class="alert-evidence-img">
+      `;
+    } else {
+      mediaContent.innerHTML = `
+        <div class="empty-media">
+          <i class="fas fa-image"></i>
+          <span>No hay evidencia multimedia</span>
+        </div>
+      `;
+    }
+
+    const resolveButton = document.getElementById("resolveAlertBtn");
+
+    if (alert.resolved) {
+      resolveButton.disabled = true;
+      resolveButton.innerText = "Alerta resuelta";
+    } else {
+      resolveButton.disabled = false;
+      resolveButton.innerText = "Marcar como Resuelta";
+    }
+
+    ALERT_SYSTEM.modal.show();
+  }
+
+  function resolveCurrentAlert() {
+    if (!ALERT_SYSTEM.currentAlertId) return;
+
+    const url = ALERT_SYSTEM.urls.resolveTemplate.replace("/0/", `/${ALERT_SYSTEM.currentAlertId}/`);
+
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-CSRFToken": "{{ csrf_token }}"
+      },
+      body: new URLSearchParams({
+        csrfmiddlewaretoken: "{{ csrf_token }}"
+      })
+    })
+    .then(response => response.json())
+    .then(() => {
+      if (ALERT_SYSTEM.modal) {
+        ALERT_SYSTEM.modal.hide();
+      }
+
+      loadAlerts();
+    })
+    .catch(error => {
+      console.error("Error al resolver alerta:", error);
+      alert("Error al resolver la alerta.");
+    });
+  }
+
+  const searchInput = document.getElementById("alertsSearch");
+
+  if (searchInput) {
+    searchInput.addEventListener("input", applySearchFilter);
+  }
+
+  const refreshButton = document.getElementById("refreshAlerts");
+
+  if (refreshButton) {
+    refreshButton.addEventListener("click", function () {
+      const icon = this.querySelector("i");
+
+      icon.classList.add("fa-spin");
+      loadAlerts();
+
+      setTimeout(() => {
+        icon.classList.remove("fa-spin");
+      }, 800);
+    });
+  }
+
+  const soundButton = document.getElementById("toggleSound");
+
+  if (soundButton) {
+    soundButton.addEventListener("click", function () {
+      ALERT_SYSTEM.soundEnabled = !ALERT_SYSTEM.soundEnabled;
+
+      this.innerHTML = `
+        <i class="fas ${ALERT_SYSTEM.soundEnabled ? "fa-volume-up" : "fa-volume-mute"}"></i>
+        ${ALERT_SYSTEM.soundEnabled ? "Sonido ON" : "Sonido OFF"}
+      `;
+    });
+  }
+
+  const resolveButton = document.getElementById("resolveAlertBtn");
+
+  if (resolveButton) {
+    resolveButton.addEventListener("click", resolveCurrentAlert);
+  }
+
+  loadAlerts();
+  updateTimestamp();
+
+  setInterval(loadAlerts, 5000);
+});
+</script>
+{% endblock javascripts %}

@@ -1,0 +1,396 @@
+{% extends 'layouts/base.html' %}
+{% load static %}
+
+{% block title %}Dashboard{% endblock title %}
+
+{% block stylesheets %}
+<link rel="stylesheet" href="{% static 'assets/css/pages/dashboard.css' %}?v=1">
+{% endblock stylesheets %}
+
+{% block content %}
+
+<section class="dashboard-page">
+
+  <!-- Header superior -->
+  <div class="dashboard-heading">
+    <div>
+      <h1>Dashboard</h1>
+      <p>Monitorea eventos de seguridad, cumplimiento de EPP, alertas e informes del sistema.</p>
+    </div>
+
+    <div class="dashboard-heading__actions">
+      <a href="{% url 'camera' %}" class="dashboard-btn dashboard-btn--primary">
+        <i class="bi bi-camera-video"></i>
+        Ver cámara
+      </a>
+
+      <a href="{% url 'lista_informes' %}" class="dashboard-btn dashboard-btn--outline">
+        <i class="bi bi-file-earmark-text"></i>
+        Informes
+      </a>
+    </div>
+  </div>
+
+  <!-- Métricas estilo imagen -->
+  <div class="dashboard-metrics">
+
+    <a href="{% url 'alerta' %}" class="metric-card metric-card--featured">
+      <div class="metric-card__top">
+        <span>Eventos hoy</span>
+        <i class="bi bi-arrow-up-right"></i>
+      </div>
+      <strong>{{ total_events_today }}</strong>
+      <p>
+        <i class="bi bi-activity"></i>
+        Eventos detectados durante la jornada actual
+      </p>
+    </a>
+
+    <a href="{% url 'alerta' %}" class="metric-card">
+      <div class="metric-card__top">
+        <span>Alertas críticas</span>
+        <i class="bi bi-arrow-up-right"></i>
+      </div>
+      <strong>{{ critical_alerts }}</strong>
+      <p>Eventos peligrosos o accesos no autorizados pendientes.</p>
+    </a>
+
+    <a href="{% url 'lista_informes' %}" class="metric-card">
+      <div class="metric-card__top">
+        <span>Informes hoy</span>
+        <i class="bi bi-arrow-up-right"></i>
+      </div>
+      <strong>{{ informes_today }}</strong>
+      <p>Informes registrados en el sistema durante el día.</p>
+    </a>
+
+    <div class="metric-card">
+      <div class="metric-card__top">
+        <span>Cumplimiento EPP</span>
+        <i class="bi bi-person-check"></i>
+      </div>
+      <strong>{{ epp_percent }}%</strong>
+      <p>Porcentaje de registros con uso correcto del EPP.</p>
+    </div>
+
+  </div>
+
+  <!-- Grid principal -->
+  <div class="dashboard-grid">
+
+    <!-- Actividad semanal -->
+    <div class="dashboard-card dashboard-card--analytics">
+      <div class="dashboard-card__header">
+        <div>
+          <h3>Actividad de seguridad</h3>
+          <p>Eventos detectados en los últimos 7 días</p>
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <canvas id="weeklyEventsChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Estado del sistema -->
+    <div class="dashboard-card dashboard-card--status">
+      <div class="dashboard-card__header">
+        <div>
+          <h3>Estado del sistema</h3>
+          <p>Resumen operativo actual</p>
+        </div>
+      </div>
+
+      <div class="status-list">
+        <div class="status-list__item">
+          <span>Cámara</span>
+          <strong class="text-success">En línea</strong>
+        </div>
+
+        <div class="status-list__item">
+          <span>Modelo IA</span>
+          <strong class="text-success">Activo</strong>
+        </div>
+
+        <div class="status-list__item">
+          <span>Personas autorizadas</span>
+          <strong>{{ authorized_people }}</strong>
+        </div>
+
+        <div class="status-list__item">
+          <span>Eventos pendientes</span>
+          <strong>{{ pending_events }}</strong>
+        </div>
+
+        <div class="status-list__item">
+          <span>Eventos resueltos</span>
+          <strong>{{ resolved_events }}</strong>
+        </div>
+      </div>
+
+      <div class="last-event-box">
+        <span>Último evento</span>
+
+        {% if last_event %}
+          <strong>{{ last_event.get_event_type_display }}</strong>
+          <small>{{ last_event.timestamp|date:"d/m/Y H:i" }}</small>
+        {% else %}
+          <strong>Sin eventos</strong>
+          <small>No hay registros todavía.</small>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Alertas recientes -->
+    <div class="dashboard-card dashboard-card--team">
+      <div class="dashboard-card__header dashboard-card__header--row">
+        <div>
+          <h3>Alertas recientes</h3>
+          <p>Últimos eventos registrados</p>
+        </div>
+
+        <a href="{% url 'alerta' %}" class="small-action">Ver todo</a>
+      </div>
+
+      <div class="event-list">
+        {% for event in recent_events %}
+          <div class="event-item">
+            <div class="event-item__icon">
+              {% if event.event_type == 'face_recognized' %}
+                <i class="bi bi-person-check"></i>
+              {% elif event.event_type == 'face_unknown' %}
+                <i class="bi bi-person-x"></i>
+              {% elif event.event_type == 'dangerous_object' %}
+                <i class="bi bi-exclamation-triangle"></i>
+              {% elif event.event_type == 'unauthorized_access' %}
+                <i class="bi bi-shield-exclamation"></i>
+              {% else %}
+                <i class="bi bi-bell"></i>
+              {% endif %}
+            </div>
+
+            <div class="event-item__info">
+              <strong>{{ event.get_event_type_display }}</strong>
+              <span>{{ event.details|truncatechars:55 }}</span>
+              <small>{{ event.timestamp|date:"d/m/Y H:i" }}</small>
+            </div>
+
+            {% if event.resolved %}
+              <span class="badge-status badge-status--ok">Resuelto</span>
+            {% else %}
+              <span class="badge-status badge-status--pending">Pendiente</span>
+            {% endif %}
+          </div>
+        {% empty %}
+          <p class="empty-text">No existen alertas recientes.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Distribución eventos -->
+    <div class="dashboard-card dashboard-card--progress">
+      <div class="dashboard-card__header">
+        <div>
+          <h3>Tipos de eventos</h3>
+          <p>Distribución general</p>
+        </div>
+      </div>
+
+      <div class="donut-container">
+        <canvas id="eventTypesChart"></canvas>
+      </div>
+
+      <div class="event-type-list">
+        {% for item in event_breakdown %}
+          <div class="event-type-list__item">
+            <span class="event-dot"></span>
+            <span>{{ item.label }}</span>
+            <strong>{{ item.total }}</strong>
+          </div>
+        {% empty %}
+          <p class="empty-text">Aún no hay eventos clasificados.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Informes recientes -->
+    <div class="dashboard-card dashboard-card--projects">
+      <div class="dashboard-card__header dashboard-card__header--row">
+        <div>
+          <h3>Informes recientes</h3>
+          <p>Registros de cumplimiento EPP</p>
+        </div>
+
+        <a href="{% url 'lista_informes' %}" class="small-action">Ver todo</a>
+      </div>
+
+      <div class="report-list">
+        {% for report in recent_reports %}
+          <div class="report-item">
+            <div class="report-item__icon">
+              <i class="bi bi-file-earmark-text"></i>
+            </div>
+
+            <div class="report-item__info">
+              <strong>{{ report.camara }}</strong>
+
+              {% if report.persona_detectada %}
+                <span>{{ report.persona_detectada }}</span>
+              {% else %}
+                <span>Persona no identificada</span>
+              {% endif %}
+
+              <small>{{ report.fecha|date:"d/m/Y H:i" }}</small>
+            </div>
+
+            {% if report.epp_correcto %}
+              <span class="badge-status badge-status--ok">EPP OK</span>
+            {% else %}
+              <span class="badge-status badge-status--warning">Sin EPP</span>
+            {% endif %}
+          </div>
+        {% empty %}
+          <p class="empty-text">No existen informes recientes.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Cumplimiento EPP -->
+    <div class="dashboard-card dashboard-card--tracker">
+      <div class="dashboard-card__header">
+        <div>
+          <h3>Cumplimiento EPP</h3>
+          <p>Resumen de seguridad ocupacional</p>
+        </div>
+      </div>
+
+      <div class="epp-score">
+        <strong>{{ epp_percent }}%</strong>
+        <span>Uso correcto de EPP</span>
+      </div>
+
+      <div class="epp-bars">
+        <div class="epp-bar">
+          <div class="epp-bar__label">
+            <span>Correcto</span>
+            <strong>{{ epp_ok_count }}</strong>
+          </div>
+          <div class="epp-bar__track">
+            <div class="epp-bar__fill" style="width: {{ epp_percent }}%;"></div>
+          </div>
+        </div>
+
+        <div class="epp-bar">
+          <div class="epp-bar__label">
+            <span>Incorrecto</span>
+            <strong>{{ epp_incorrect_count }}</strong>
+          </div>
+          <div class="epp-bar__track">
+            <div class="epp-bar__fill epp-bar__fill--light" style="width: {{ epp_incorrect_percent }}%;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</section>
+
+{{ weekly_labels|json_script:"weekly-labels" }}
+{{ weekly_values|json_script:"weekly-values" }}
+{{ event_labels|json_script:"event-labels" }}
+{{ event_values|json_script:"event-values" }}
+
+{% endblock content %}
+
+{% block javascripts %}
+<!--<script src="/static/assets/vendor/chart.js/dist/Chart.min.js"></script>-->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
+
+<script>
+  const weeklyLabels = JSON.parse(document.getElementById('weekly-labels').textContent);
+  const weeklyValues = JSON.parse(document.getElementById('weekly-values').textContent);
+  const eventLabels = JSON.parse(document.getElementById('event-labels').textContent);
+  const eventValues = JSON.parse(document.getElementById('event-values').textContent);
+
+  const weeklyCanvas = document.getElementById('weeklyEventsChart');
+
+  if (weeklyCanvas) {
+    new Chart(weeklyCanvas, {
+      type: 'bar',
+      data: {
+        labels: weeklyLabels,
+        datasets: [{
+          label: 'Eventos',
+          data: weeklyValues,
+          backgroundColor: [
+            'rgba(19, 60, 85, 0.18)',
+            '#386FA4',
+            '#59A5D8',
+            '#133C55',
+            '#84D2F6',
+            'rgba(19, 60, 85, 0.18)',
+            '#59A5D8'
+          ],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        legend: {
+          display: false
+        },
+        scales: {
+          xAxes: [{
+            gridLines: {
+              display: false,
+              drawBorder: false
+            }
+          }],
+          yAxes: [{
+            ticks: {
+              beginAtZero: true,
+              precision: 0
+            },
+            gridLines: {
+              color: 'rgba(19, 60, 85, 0.08)',
+              drawBorder: false
+            }
+          }]
+        }
+      }
+    });
+  }
+
+  const eventCanvas = document.getElementById('eventTypesChart');
+
+  if (eventCanvas) {
+    new Chart(eventCanvas, {
+      type: 'doughnut',
+      data: {
+        labels: eventLabels,
+        datasets: [{
+          data: eventValues,
+          backgroundColor: [
+            '#133C55',
+            '#386FA4',
+            '#59A5D8',
+            '#84D2F6',
+            '#91E5F6'
+          ],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutoutPercentage: 68,
+        legend: {
+          display: false
+        }
+      }
+    });
+  }
+</script>
+{% endblock javascripts %}

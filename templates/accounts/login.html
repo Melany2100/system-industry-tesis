@@ -4,79 +4,96 @@
 {% block title %}Iniciar sesión{% endblock title %}
 
 {% block stylesheets %}
-<link rel="stylesheet" href="{% static 'assets/css/login.css' %}">
+<link rel="stylesheet" href="{% static 'assets/css/login2.css' %}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 {% endblock stylesheets %}
 
 {% block content %}
-<div class="container py-5 min-vh-100 d-flex align-items-center justify-content-center">
-  <div class="row justify-content-center w-100">
-    <div class="col-lg-5 col-md-7">
-      <div class="card shadow border-0 login-card">
-        <div class="card-header bg-transparent pb-4 pt-4 text-center border-0">
-          <h2 class="mb-1">Iniciar sesión</h2>
-          <p class="text-muted mb-0">
-            Ingresa tus credenciales para acceder al sistema
-          </p>
+
+<div class="login-page">
+  <div class="login-container">
+
+    <!-- LADO IZQUIERDO -->
+    <div class="login-left">
+      <div class="login-left__overlay"></div>
+
+      <div class="login-left__content">
+        <div class="login-logo-box">
+          <img src="{% static 'assets/img/LogoUGcolor.png' %}" alt="logo-empresa" class="login-logo">
         </div>
 
-        <div class="card-body px-lg-5 py-lg-4">
-          <div class="text-center text-muted mb-4">
-            {% if msg %}
-              <p class="mb-0">{{ msg }}</p>
-            {% endif %}
-          </div>
-
-          <form method="POST">
-            {% csrf_token %}
-
-            <div class="form-group mb-3">
-              <label class="form-label">Usuario</label>
-              <div class="input-group input-group-alternative">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><i class="ni ni-single-02"></i></span>
-                </div>
-                {{ form.username }}
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Contraseña</label>
-              <div class="input-group input-group-alternative">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><i class="ni ni-lock-circle-open"></i></span>
-                </div>
-                {{ form.password }}
-              </div>
-            </div>
-
-            <div class="custom-control custom-control-alternative custom-checkbox mt-3">
-              <input class="custom-control-input" id="customCheckLogin" type="checkbox">
-              <label class="custom-control-label" for="customCheckLogin">
-                <span class="text-muted">Recordarme</span>
-              </label>
-            </div>
-
-            <div class="text-center">
-              <button type="submit" class="btn btn-primary my-4 w-100">
-                Entrar
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <div class="row mt-3">
-        <div class="col-6">
-          <a href="{% url 'register' %}" class="text-light">
-            <small>Crear cuenta</small>
-          </a>
-        </div>
+        <h2 class="login-brand-title">SMRI With IA</h2>
+        <p class="login-brand-text">
+          Plataforma de monitoreo y gestión de acceso al sistema.
+        </p>
       </div>
     </div>
+
+    <!-- LADO DERECHO -->
+    <div class="login-right">
+      <div class="login-card">
+        <span class="login-badge">Bienvenido</span>
+
+        <h1 class="login-title">Inicia sesión</h1>
+        <p class="login-subtitle">Ingresa tus credenciales para continuar</p>
+
+        {% if msg %}
+          <div class="login-alert">
+            {{ msg }}
+          </div>
+        {% endif %}
+
+        <form method="POST" class="login-form">
+          {% csrf_token %}
+
+          <div class="input-group-custom">
+            <span class="input-icon">
+              <i class="bi bi-envelope-fill"></i>
+            </span>
+            <input
+              type="text"
+              name="username"
+              class="input-custom"
+              placeholder="Correo o usuario"
+              required
+            >
+          </div>
+
+          <div class="input-group-custom">
+            <span class="input-icon">
+              <i class="bi bi-lock-fill"></i>
+            </span>
+            <input
+              type="password"
+              name="password"
+              class="input-custom"
+              placeholder="Contraseña"
+              required
+            >
+          </div>
+
+          <div class="login-options">
+            <label class="remember-me">
+              <input type="checkbox">
+              <span>Recordarme</span>
+            </label>
+
+            <a href="#" class="forgot-link">¿Olvidaste tu contraseña?</a>
+          </div>
+
+          <button type="submit" class="login-btn">
+            Ingresar
+          </button>
+        </form>
+
+        <p class="signup-text">
+          ¿No tienes cuenta?
+          <a href="{% url 'register' %}">Regístrate</a>
+        </p>
+      </div>
+    </div>
+
   </div>
 </div>
-{% endblock content %}
 
-{% block javascripts %}
-<script src="{% static 'assets/js/login.js' %}"></script>
-{% endblock javascripts %}
+{% endblock content %}

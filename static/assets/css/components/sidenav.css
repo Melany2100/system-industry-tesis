@@ -1,146 +1,270 @@
+/* ================================
+   SIDENAV - SMRI
+================================ */
+
 .custom-sidenav {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  bottom: 16px;
-  width: 110px;
-  z-index: 1030;
+  position: fixed !important;
+  top: 1rem !important;
+  left: 1rem !important;
+  width: 15rem !important;
+  height: calc(100vh - 2rem) !important;
+  z-index: 1050 !important;
+  background: transparent !important;
 }
 
 .custom-sidenav__inner {
-  height: 100%;
-  background: linear-gradient(180deg, #7c4dff 0%, #6d38ff 100%);
-  border-radius: 34px;
-  box-shadow: 0 15px 35px rgba(103, 58, 183, 0.28);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 0;
+  width: 100% !important;
+  height: 100% !important;
+  background: var(--color-surface) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-soft) !important;
+  padding: 1.25rem 0.9rem !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
 }
 
-.custom-sidenav__top,
-.custom-sidenav__bottom {
-  width: 100%;
-  display: flex;
-  justify-content: center;
+/* Marca */
+.custom-sidenav__brand {
+  margin-bottom: 2rem !important;
 }
 
-.custom-sidenav__brand,
-.custom-sidenav__logout {
-  width: 56px;
-  height: 56px;
-  border-radius: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  text-decoration: none;
-  font-size: 1.6rem;
-  position: relative;
-  transition: all 0.3s ease;
+.custom-sidenav__brand-link {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  text-decoration: none !important;
+  color: var(--color-text) !important;
+}
+
+.custom-sidenav__brand-icon {
+  width: 2.5rem !important;
+  height: 2.5rem !important;
+  min-width: 2.5rem !important;
+  border-radius: 50% !important;
+  background: var(--color-active-bg) !important;
+  color: var(--color-dark) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 1.35rem !important;
+}
+
+.custom-sidenav__brand-text {
+  display: flex !important;
+  flex-direction: column !important;
+  line-height: 1.1 !important;
+  white-space: nowrap !important;
+}
+
+.custom-sidenav__brand-text span {
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  color: var(--color-dark) !important;
+}
+
+.custom-sidenav__brand-text small {
+  font-size: 0.68rem !important;
+  color: var(--color-text-muted) !important;
+  margin-top: 0.2rem !important;
+}
+
+/* Secciones */
+.custom-sidenav__section {
+  margin-bottom: 1.3rem !important;
+}
+
+.custom-sidenav__title {
+  font-size: 0.68rem !important;
+  font-weight: 700 !important;
+  color: var(--color-text-muted) !important;
+  margin: 0 0 0.7rem 0.85rem !important;
+  letter-spacing: 0.05em !important;
 }
 
 .custom-sidenav__menu {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .custom-sidenav__item {
-  width: 100%;
-  display: flex;
-  justify-content: center;
+  margin-bottom: 0.35rem !important;
 }
 
+/* Links */
 .custom-sidenav__link {
-  width: 62px;
-  height: 62px;
-  border-radius: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  text-decoration: none;
-  font-size: 1.45rem;
-  position: relative;
-  transition: all 0.3s ease;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  min-height: 2.55rem !important;
+  padding: 0 0.85rem !important;
+  border-radius: 0.9rem !important;
+  text-decoration: none !important;
+  color: var(--color-text-muted) !important;
+  background: transparent !important;
+  font-size: 0.9rem !important;
+  font-weight: 500 !important;
+  transition: all 0.25s ease !important;
+  white-space: nowrap !important;
 }
 
-.custom-sidenav__link span,
-.custom-sidenav__logout span {
-  position: absolute;
-  left: 78px;
-  white-space: nowrap;
-  background: #ffffff;
-  color: #5a35d6;
-  padding: 8px 14px;
-  border-radius: 12px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-8px);
-  transition: all 0.25s ease;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+.custom-sidenav__link i {
+  font-size: 1.05rem !important;
+  min-width: 1.2rem !important;
+  text-align: center !important;
 }
 
-.custom-sidenav__brand:hover,
-.custom-sidenav__logout:hover,
+/* Hover usando el color más claro */
 .custom-sidenav__link:hover {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  background: var(--color-hover-bg) !important;
+  color: var(--color-dark) !important;
+  transform: translateX(0.12rem) !important;
 }
 
-.custom-sidenav__link:hover span,
-.custom-sidenav__logout:hover span {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(0);
-}
-
+/* Activo */
 .custom-sidenav__link.active {
-  background: #ffffff;
-  color: #6d38ff;
-  width: 72px;
-  height: 72px;
-  border-radius: 26px;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.14);
+  background: var(--color-active-bg) !important;
+  color: var(--color-dark) !important;
+  font-weight: 700 !important;
 }
 
-.custom-sidenav__link.active span {
-  display: none;
+.custom-sidenav__link.active::before {
+  content: "" !important;
+  position: absolute !important;
+  left: -0.9rem !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 0.28rem !important;
+  height: 1.7rem !important;
+  border-radius: 0 0.5rem 0.5rem 0 !important;
+  background: var(--color-primary) !important;
 }
 
-/* Ajuste del contenido principal */
-.main-content {
-  margin-left: 140px !important;
+/* Tarjeta inferior */
+.custom-sidenav__card {
+  margin-top: auto !important;
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.20), transparent 35%),
+    linear-gradient(145deg, var(--color-dark), var(--color-primary)) !important;
+  border-radius: 1.2rem !important;
+  padding: 1rem !important;
+  color: #ffffff !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+.custom-sidenav__card::after {
+  content: "" !important;
+  position: absolute !important;
+  width: 8rem !important;
+  height: 8rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 50% !important;
+  right: -3rem !important;
+  bottom: -3rem !important;
+}
+
+.custom-sidenav__card-icon {
+  width: 2rem !important;
+  height: 2rem !important;
+  border-radius: 50% !important;
+  background: rgba(var(--color-light-rgb), 0.22) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-bottom: 0.85rem !important;
+}
+
+.custom-sidenav__card h4 {
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  margin: 0 0 0.35rem !important;
+  color: #ffffff !important;
+}
+
+.custom-sidenav__card p {
+  font-size: 0.72rem !important;
+  line-height: 1.35 !important;
+  margin: 0 0 0.9rem !important;
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+.custom-sidenav__card-btn {
+  position: relative !important;
+  z-index: 1 !important;
+  display: block !important;
+  width: 100% !important;
+  padding: 0.6rem 0.75rem !important;
+  border-radius: 999px !important;
+  background: rgba(var(--color-light-rgb), 0.20) !important;
+  color: #ffffff !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+}
+
+.custom-sidenav__card-btn:hover {
+  background: var(--color-light) !important;
+  color: var(--color-dark) !important;
+}
+
+/* Logout */
+.custom-sidenav__bottom {
+  margin-top: 0.75rem !important;
+}
+
+.custom-sidenav__logout {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  min-height: 2.45rem !important;
+  padding: 0 0.85rem !important;
+  border-radius: 0.9rem !important;
+  color: var(--color-text-muted) !important;
+  background: transparent !important;
+  text-decoration: none !important;
+  font-size: 0.9rem !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+}
+
+.custom-sidenav__logout:hover {
+  background: rgba(var(--color-light-rgb), 0.30) !important;
+  color: var(--color-dark) !important;
 }
 
 /* Responsive */
-@media (max-width: 991px) {
+@media (max-width: 992px) {
   .custom-sidenav {
-    left: 10px;
-    top: 10px;
-    bottom: 10px;
-    width: 88px;
+    width: 5.2rem !important;
   }
 
   .custom-sidenav__inner {
-    border-radius: 28px;
+    padding: 1rem 0.7rem !important;
+    align-items: center !important;
   }
 
-  .main-content {
-    margin-left: 110px !important;
-  }
-
+  .custom-sidenav__brand-text,
+  .custom-sidenav__title,
   .custom-sidenav__link span,
-  .custom-sidenav__logout span {
-    display: none;
+  .custom-sidenav__logout span,
+  .custom-sidenav__card {
+    display: none !important;
+  }
+
+  .custom-sidenav__brand-link,
+  .custom-sidenav__link,
+  .custom-sidenav__logout {
+    justify-content: center !important;
+  }
+
+  .custom-sidenav__link,
+  .custom-sidenav__logout {
+    width: 3rem !important;
+    height: 3rem !important;
+    padding: 0 !important;
   }
 }

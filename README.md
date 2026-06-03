@@ -45,3 +45,6 @@ pip install numpy opencv-python face_recognition
 
 Notas:
 - `face_recognition` puede requerir dependencias nativas (dlib/cmake) según tu sistema operativo.
+
+## Generar una nueva clave secreta
+```python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"

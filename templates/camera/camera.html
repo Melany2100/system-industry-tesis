@@ -56,7 +56,8 @@
             {% for camera in cameras %}
               <option 
                 value="{% url 'video_feed_camera' camera.id %}"
-                data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}">
+                data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}"
+                {% if selected_camera and camera.id == selected_camera.id %}selected{% endif %}>
                 {{ camera.nombre }}
               </option>
             {% endfor %}
@@ -162,6 +163,7 @@
         </div>
 
         <form id="registerFaceForm" enctype="multipart/form-data">
+          {% csrf_token %}
           <div class="face-capture-preview" id="facePreview">
             <i class="fas fa-user-circle"></i>
             <span>Vista previa</span>
@@ -267,6 +269,8 @@
 {% block javascripts %}
 <script>
   $(document).ready(function () {
+
+    const csrfToken = $('input[name=csrfmiddlewaretoken]').first().val() || '';
 
     const APP_CONFIG = {
       urls: {
@@ -387,24 +391,41 @@
           let priority = 'Normal';
 
           switch (event.event_type) {
-            case 'face_recognized':
-              tone = 'success';
-              icon = 'fa-user-check';
-              priority = 'Baja';
-              break;
+          case 'face_recognized':
+            tone = 'success';
+            icon = 'fa-user-check';
+            priority = 'Baja';
+            break;
 
-            case 'face_unknown':
-              tone = 'warning';
-              icon = 'fa-user-times';
-              priority = 'Media';
-              break;
+          case 'face_unknown':
+            tone = 'warning';
+            icon = 'fa-user-times';
+            priority = 'Media';
+            break;
 
-            case 'dangerous_object':
-            case 'unauthorized_access':
-              tone = 'danger';
-              icon = 'fa-exclamation-triangle';
-              priority = 'Alta';
-              break;
+          case 'dangerous_object':
+            tone = 'danger';
+            icon = 'fa-exclamation-triangle';
+            priority = 'Alta';
+            break;
+
+          case 'ppe_missing':
+            tone = 'warning';
+            icon = 'fa-hard-hat';
+            priority = 'Alta';
+            break;
+
+          case 'ppe_incorrect':
+            tone = 'warning';
+            icon = 'fa-user-shield';
+            priority = 'Alta';
+            break;
+
+          case 'camera_error':
+            tone = 'secondary';
+            icon = 'fa-video-slash';
+            priority = 'Media';
+            break;
           }
 
           const title = event.event_type_display || event.event_type || 'Evento';
@@ -541,6 +562,9 @@
   $.ajax({
     url: APP_CONFIG.urls.registerFace,
     type: 'POST',
+    headers: {
+    'X-CSRFToken': csrfToken
+    },
     data: formData,
     processData: false,
     contentType: false,

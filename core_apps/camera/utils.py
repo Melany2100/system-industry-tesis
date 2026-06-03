@@ -16,6 +16,9 @@ except Exception:
     cv2 = None
 
 
+EPP_EVENT_TYPES = {"ppe_missing", "ppe_incorrect"}
+
+
 def build_event_image_path(event_type):
     now = timezone.localtime()
     unique_id = uuid.uuid4().hex[:8]

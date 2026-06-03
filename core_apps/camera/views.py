@@ -1,21 +1,28 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 import time
 import traceback
 from collections import deque
 from threading import Lock
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators import gzip
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
 from django.views.generic import TemplateView
 
-from .models import AuthorizedPerson, SecurityEvent, Camera
-from core_apps.camera.utils import create_security_event, can_save_event, save_authorized_face_image
+from .models import AuthorizedPerson, Camera, SecurityEvent
+from core_apps.camera.object_rules import OBJECT_RULES
+from core_apps.camera.utils import (
+    can_save_event,
+    create_security_event,
+    save_authorized_face_image,
+)
 
 # =========================
 # LIVE LOG (RAM) - incremental
@@ -43,8 +50,9 @@ def _log_line(message: str, key: str | None = None, throttle_sec: float = 0.0) -
         _LIVE_LOG.append({"id": _LOG_SEQ, "ts": ts, "msg": message})
 
 
+@require_GET
+@login_required
 def live_status(request):
-    """Devuelve logs nuevos usando ?after=<id>"""
     try:
         after = int(request.GET.get("after", "0"))
     except ValueError:
@@ -100,75 +108,11 @@ YOLO_CONFIG = {
     "weights": os.path.join(settings.BASE_DIR, "camera", "yolov3-tiny.weights"),
     "cfg": os.path.join(settings.BASE_DIR, "camera", "yolov3-tiny.cfg"),
     "classes": os.path.join(settings.BASE_DIR, "camera", "coco.names"),
-
-    # Clases COCO que el sistema debe monitorear.
-    # Nota: "gun" no existe en coco.names, por eso no se incluye aquí.
-    "monitored_classes": [
-        "knife",
-        "scissors",
-        "baseball bat",
-        "bottle",
-        "cell phone",
-        "backpack",
-        "handbag",
-        "suitcase",
-    ],
-}
-
-# Reglas de clasificación para los objetos monitoreados por YOLO.
-# event_type debe coincidir con los choices del modelo SecurityEvent.
-OBJECT_RULES = {
-    "knife": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: cuchillo",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "scissors": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: tijeras",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "baseball bat": {
-        "event_type": "dangerous_object",
-        "message": "Objeto contundente detectado",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "bottle": {
-        "event_type": "dangerous_object",
-        "message": "Botella detectada en zona monitoreada",
-        "priority": "Media",
-        "color": (0, 165, 255),
-    },
-    "cell phone": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: celular",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "backpack": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: mochila",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "handbag": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: bolso",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "suitcase": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: maleta",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
+    "monitored_classes": list(OBJECT_RULES.keys()),
 }
 
 _YOLO_CACHE = {"net": None, "classes": None}
+_PPE_CACHE = {"model": None}
 
 
 def _load_yolo():
@@ -205,9 +149,6 @@ def _load_yolo():
 # =========================
 # PPE (Ultralytics)
 # =========================
-_PPE_CACHE = {"model": None}
-
-
 def _load_ppe_model():
     if _PPE_CACHE["model"] is not None:
         return _PPE_CACHE["model"]
@@ -233,7 +174,66 @@ def _load_ppe_model():
 
 
 # =========================
-# Frames (con FPS lento)
+# Helpers de cámara
+# =========================
+def _get_request_fps(request):
+    try:
+        return int(request.GET.get("fps", "8"))
+    except ValueError:
+        return 8
+
+
+def _open_camera_source(camera: Camera):
+    cv2 = _safe_import_cv2()
+    if cv2 is None:
+        return None, "OpenCV no está instalado."
+
+    source = camera.get_video_source()
+
+    try:
+        if source is None:
+            return None, f"Fuente de video vacía para la cámara: {camera.nombre}"
+
+        if isinstance(source, int):
+            cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(source)
+
+        if not cap or not cap.isOpened():
+            if cap:
+                cap.release()
+            return None, f"No se pudo abrir la cámara: {camera.nombre}"
+
+        return cap, None
+    except Exception as e:
+        return None, f"Error al intentar abrir la cámara {camera.nombre}: {str(e)}"
+
+
+@require_GET
+@login_required
+def camera_status(request):
+    camera = Camera.objects.filter(is_active=True).order_by("id").first()
+
+    if camera is None:
+        return JsonResponse(
+            {"success": False, "message": "No hay cámaras activas configuradas."},
+            status=404,
+        )
+
+    cap, error = _open_camera_source(camera)
+    if error:
+        _log_line(f"❌ {error}", key=f"cam_status_fail_{camera.id}", throttle_sec=5)
+        return JsonResponse({"success": False, "message": error}, status=400)
+
+    cap.release()
+    return JsonResponse(
+        {"success": True, "message": f"Cámara disponible: {camera.nombre}"},
+        status=200,
+    )
+
+
+# =========================
+# Frames
 # =========================
 def gen_frames(camera: Camera, target_fps: int = 10):
     cv2 = _safe_import_cv2()
@@ -249,6 +249,14 @@ def gen_frames(camera: Camera, target_fps: int = 10):
     camera_source = camera.get_video_source()
     camera_name = camera.nombre
 
+    if camera_source is None:
+        _log_line(
+            f"❌ Fuente de video vacía para la cámara: {camera_name}",
+            key=f"empty_source_{camera.id}",
+            throttle_sec=10
+        )
+        return
+
     if isinstance(camera_source, int):
         cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
     else:
@@ -261,7 +269,9 @@ def gen_frames(camera: Camera, target_fps: int = 10):
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
 
     frame_counter = 0
     last_ppe_event_frame = 0
@@ -273,7 +283,7 @@ def gen_frames(camera: Camera, target_fps: int = 10):
     _log_line(
         f"🟢 Streaming iniciado: {camera_name} (fps={target_fps})",
         key=f"stream_start_{camera.id}",
-        throttle_sec=2
+        throttle_sec=2,
     )
 
     try:
@@ -286,12 +296,11 @@ def gen_frames(camera: Camera, target_fps: int = 10):
             next_frame_at = max(next_frame_at + frame_interval, time.monotonic() + 0.001)
 
             ok, frame = cap.read()
-
             if not ok:
                 _log_line(
                     f"❌ No se pudo leer frame de {camera_name}",
                     key=f"frame_fail_{camera.id}",
-                    throttle_sec=5
+                    throttle_sec=5,
                 )
                 break
 
@@ -307,21 +316,21 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                     _log_line(
                         f"FACE [{camera_name}]: {len(faces)} rostro(s)",
                         key=f"face_count_{camera.id}",
-                        throttle_sec=0.8
+                        throttle_sec=0.8,
                     )
 
                 for (x, y, w, h) in faces:
                     x, y, w, h = x * 2, y * 2, w * 2, h * 2
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-            # YOLO dangerous objects
+            # YOLO monitored objects
             if frame_counter % 6 == 0 and net is not None and coco_classes is not None:
                 blob = cv2.dnn.blobFromImage(
                     small_frame,
                     1 / 255.0,
                     (320, 320),
                     swapRB=True,
-                    crop=False
+                    crop=False,
                 )
 
                 net.setInput(blob)
@@ -361,26 +370,34 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                         conf = confs[i]
 
                         rule = OBJECT_RULES.get(label)
-
                         if rule is None:
                             continue
 
                         event_type = rule["event_type"]
-                        priority = rule["priority"]
+                        category = rule["category"]
+                        severity = rule["severity"]
+                        should_alert = rule["should_alert"]
                         message = rule["message"]
                         color = rule["color"]
 
+                        severity_label = {
+                            "critical": "CRÍTICO",
+                            "high": "ALTO",
+                            "medium": "MEDIO",
+                            "low": "BAJO",
+                            "info": "INFO",
+                        }.get(severity, severity.upper())
+
                         _log_line(
-                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | {priority}",
+                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | {severity_label}",
                             key=f"obj_{camera.id}_{label}",
                             throttle_sec=0.25,
                         )
 
                         cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-
                         cv2.putText(
                             frame,
-                            f"{label}: {conf:.2f} | {priority}",
+                            f"{label}: {conf:.2f} | {severity_label}",
                             (x, max(y - 10, 20)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
@@ -388,21 +405,24 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                             2,
                         )
 
-                        event_key = f"{event_type}_camera_{camera.id}_{label}"
+                        event_key = f"{event_type}_camera_{camera.id}_{label}_{severity}"
 
                         if can_save_event(event_key, seconds=20):
                             try:
                                 create_security_event(
                                     event_type=event_type,
-                                    details=f"{message} | Prioridad: {priority} | Confianza: {conf:.2f}",
+                                    details=f"{message} | Severidad: {severity_label} | Confianza: {conf:.2f}",
                                     frame=frame.copy(),
                                     user=None,
                                     camera=camera,
-                                    epp_correcto=False,
+                                    category=category,
+                                    severity=severity,
+                                    object_label=label,
+                                    should_alert=should_alert,
                                 )
 
                                 _log_line(
-                                    f"📸 Evidencia guardada [{camera_name}]: {label} ({priority})",
+                                    f"📸 Evidencia guardada [{camera_name}]: {label} ({severity_label})",
                                     key=f"evidence_{camera.id}_{event_type}_{label}",
                                     throttle_sec=2,
                                 )
@@ -448,32 +468,35 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                             if px1 <= cx <= px2 and py1 <= cy <= py2:
                                 present.add(label)
-
                                 if label.startswith("no-"):
                                     negatives.add(label)
 
                         if negatives:
-                            msg = "⚠ Indumentaria incorrecta: " + ", ".join(sorted([x.upper() for x in negatives]))
+                            msg = "⚠ Indumentaria incorrecta: " + ", ".join(
+                                sorted([x.upper() for x in negatives])
+                            )
 
                             _log_line(
                                 f"PPE [{camera_name}]: {msg}",
                                 key=f"ppe_neg_{camera.id}",
-                                throttle_sec=0.4
+                                throttle_sec=0.4,
                             )
 
                             if (frame_counter - last_ppe_event_frame) > 60:
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_incorrect",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     epp_correcto=False,
+                                    category="ppe",
+                                    severity="high",
+                                    object_label=",".join(sorted(negatives)),
+                                    should_alert=True,
                                 )
-
                                 last_ppe_event_frame = frame_counter
 
                             cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
-
                             cv2.putText(
                                 frame,
                                 msg,
@@ -481,19 +504,16 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
                                 (0, 255, 255),
-                                2
+                                2,
                             )
-
                             continue
 
                         missing = []
 
                         if "hardhat" not in present:
                             missing.append("hardhat")
-
                         if "safety vest" not in present:
                             missing.append("safety vest")
-
                         if "mask" not in present:
                             missing.append("mask")
 
@@ -503,22 +523,24 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                             _log_line(
                                 f"PPE [{camera_name}]: {msg}",
                                 key=f"ppe_missing_{camera.id}",
-                                throttle_sec=0.4
+                                throttle_sec=0.4,
                             )
 
                             if (frame_counter - last_ppe_event_frame) > 60:
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_missing",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     epp_correcto=False,
+                                    category="ppe",
+                                    severity="high",
+                                    object_label=",".join(missing),
+                                    should_alert=True,
                                 )
-
                                 last_ppe_event_frame = frame_counter
 
                             cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
-
                             cv2.putText(
                                 frame,
                                 msg,
@@ -526,18 +548,17 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
                                 (0, 255, 255),
-                                2
+                                2,
                             )
 
                         else:
                             _log_line(
                                 f"PPE [{camera_name}]: ✅ EPP OK",
                                 key=f"ppe_ok_{camera.id}",
-                                throttle_sec=1.2
+                                throttle_sec=1.2,
                             )
 
                             cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 0), 2)
-
                             cv2.putText(
                                 frame,
                                 "EPP OK",
@@ -545,18 +566,17 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
                                 (0, 255, 0),
-                                2
+                                2,
                             )
 
                 except Exception as e:
                     _log_line(
                         f"❌ Error PPE detect [{camera_name}]: {e}",
                         key=f"ppe_detect_err_{camera.id}",
-                        throttle_sec=5
+                        throttle_sec=5,
                     )
 
             ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-
             if not ret:
                 continue
 
@@ -567,25 +587,27 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
     finally:
         cap.release()
-
         _log_line(
             f"🟠 Streaming detenido: {camera_name}",
             key=f"stream_stop_{camera.id}",
-            throttle_sec=2
+            throttle_sec=2,
         )
 
-def _get_request_fps(request):
-    try:
-        return int(request.GET.get("fps", "8"))
-    except ValueError:
-        return 8
 
+# =========================
+# Video feed por cámara
+# =========================
+@require_GET
+@login_required
 @gzip.gzip_page
 def video_feed(request, camera_id):
     cv2 = _safe_import_cv2()
 
     if cv2 is None:
-        return JsonResponse({"success": False, "message": "OpenCV no está instalado."}, status=400)
+        return JsonResponse(
+            {"success": False, "message": "OpenCV no está instalado."},
+            status=400
+        )
 
     camera = get_object_or_404(Camera, id=camera_id, is_active=True)
     fps = _get_request_fps(request)
@@ -595,6 +617,24 @@ def video_feed(request, camera_id):
         content_type="multipart/x-mixed-replace;boundary=frame",
     )
 
+
+@require_GET
+@login_required
+@gzip.gzip_page
+def video_feed_camera(request, camera_id):
+    camera = get_object_or_404(Camera, id=camera_id, is_active=True)
+
+    _log_line(
+        f"🎥 Cámara seleccionada: {camera.nombre}",
+        key=f"camera_selected_{camera.id}",
+        throttle_sec=2,
+    )
+
+    return video_feed(request, camera_id)
+
+
+@require_GET
+@login_required
 @gzip.gzip_page
 def video_feed_default(request):
     cv2 = _safe_import_cv2()
@@ -613,41 +653,22 @@ def video_feed_default(request):
             status=404
         )
 
-    fps = _get_request_fps(request)
-
-    return StreamingHttpResponse(
-        gen_frames(camera=camera, target_fps=fps),
-        content_type="multipart/x-mixed-replace;boundary=frame",
-    )
+    return video_feed(request, camera.id)
 
 
-@csrf_exempt
+# =========================
+# Registro facial
+# =========================
+@require_POST
+@login_required
 def register_face(request):
-    if request.method != "POST":
-        return JsonResponse(
-            {"success": False, "message": "Método no permitido."},
-            status=405
-        )
-
     try:
         face_recognition = _safe_import_face_recognition()
 
         if face_recognition is None:
             return JsonResponse(
-                {
-                    "success": False,
-                    "message": "La librería face_recognition no está instalada."
-                },
+                {"success": False, "message": "La librería face_recognition no está instalada."},
                 status=400
-            )
-
-        if not request.user.is_authenticated:
-            return JsonResponse(
-                {
-                    "success": False,
-                    "message": "Debes iniciar sesión para registrar un rostro."
-                },
-                status=401
             )
 
         nombres = request.POST.get("nombres", "").strip()
@@ -655,58 +676,31 @@ def register_face(request):
         celular = request.POST.get("celular", "").strip()
         correo = request.POST.get("correo", "").strip().lower()
         cargo = request.POST.get("cargo", "").strip()
-
         image_file = request.FILES.get("image")
 
         if not nombres:
-            return JsonResponse(
-                {"success": False, "message": "Ingresa los nombres de la persona."},
-                status=400
-            )
-
+            return JsonResponse({"success": False, "message": "Ingresa los nombres de la persona."}, status=400)
         if not apellidos:
-            return JsonResponse(
-                {"success": False, "message": "Ingresa los apellidos de la persona."},
-                status=400
-            )
-
+            return JsonResponse({"success": False, "message": "Ingresa los apellidos de la persona."}, status=400)
         if not correo:
-            return JsonResponse(
-                {"success": False, "message": "Ingresa el correo de la persona."},
-                status=400
-            )
-
+            return JsonResponse({"success": False, "message": "Ingresa el correo de la persona."}, status=400)
         if not cargo:
-            return JsonResponse(
-                {"success": False, "message": "Ingresa el cargo de la persona."},
-                status=400
-            )
-
+            return JsonResponse({"success": False, "message": "Ingresa el cargo de la persona."}, status=400)
         if not image_file:
-            return JsonResponse(
-                {"success": False, "message": "Selecciona una imagen del rostro."},
-                status=400
-            )
+            return JsonResponse({"success": False, "message": "Selecciona una imagen del rostro."}, status=400)
 
         image_data = face_recognition.load_image_file(image_file)
-
         face_locations = face_recognition.face_locations(image_data)
 
         if not face_locations:
             return JsonResponse(
-                {
-                    "success": False,
-                    "message": "No se detectó ningún rostro en la imagen."
-                },
+                {"success": False, "message": "No se detectó ningún rostro en la imagen."},
                 status=400
             )
 
         if len(face_locations) > 1:
             return JsonResponse(
-                {
-                    "success": False,
-                    "message": "La imagen debe contener solo un rostro."
-                },
+                {"success": False, "message": "La imagen debe contener solo un rostro."},
                 status=400
             )
 
@@ -714,10 +708,7 @@ def register_face(request):
 
         if not encodings:
             return JsonResponse(
-                {
-                    "success": False,
-                    "message": "No se pudo generar la codificación facial."
-                },
+                {"success": False, "message": "No se pudo generar la codificación facial."},
                 status=400
             )
 
@@ -760,44 +751,42 @@ def register_face(request):
         print(traceback.format_exc())
 
         return JsonResponse(
-            {
-                "success": False,
-                "message": f"Error interno al registrar el rostro: {str(e)}"
-            },
+            {"success": False, "message": f"Error interno al registrar el rostro: {str(e)}"},
             status=500
         )
 
+
+# =========================
+# Eventos
+# =========================
+@require_GET
+@login_required
 def get_events(request):
-    events = SecurityEvent.objects.order_by("-timestamp")[:50]
+    events = SecurityEvent.objects.select_related("camera", "related_user").order_by("-timestamp")[:50]
     data = [
         {
             "id": event.id,
             "event_type": event.event_type,
             "event_type_display": event.get_event_type_display(),
+            "category": event.category,
+            "severity": event.severity,
+            "object_label": event.object_label,
+            "should_alert": event.should_alert,
             "details": event.details,
             "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "resolved": event.resolved,
-            "image_path": event.get_image_url() if hasattr(event, "get_image_url") else None,
+            "image_url": event.get_image_url() if hasattr(event, "get_image_url") else None,
+            "camera": event.camera.nombre if getattr(event, "camera", None) else "Sin cámara",
         }
         for event in events
     ]
     return JsonResponse({"events": data})
 
 
-@csrf_exempt
-def mark_event_resolved(request, event_id):
-    if request.method != "POST":
-        return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
-
-    event = get_object_or_404(SecurityEvent, id=event_id)
-    event.resolved = True
-    event.save()
-    _log_line(f"✅ Evento resuelto: {event_id}", key=f"ev_res_{event_id}", throttle_sec=0.5)
-    return JsonResponse({"status": "success"})
-
-
+@require_GET
+@login_required
 def get_security_events(request):
-    events = SecurityEvent.objects.all().order_by("-timestamp")[:50]
+    events = SecurityEvent.objects.select_related("camera", "related_user").order_by("-timestamp")[:50]
     events_data = []
     for event in events:
         events_data.append(
@@ -805,6 +794,10 @@ def get_security_events(request):
                 "id": event.id,
                 "event_type": event.event_type,
                 "event_type_display": event.get_event_type_display(),
+                "category": event.category,
+                "severity": event.severity,
+                "object_label": event.object_label,
+                "should_alert": event.should_alert,
                 "details": event.details,
                 "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "resolved": event.resolved,
@@ -816,24 +809,30 @@ def get_security_events(request):
     return JsonResponse({"events": events_data})
 
 
-@csrf_exempt
-def mark_event_as_resolved(request, event_id):
-    return mark_event_resolved(request, event_id)
+@require_POST
+@login_required
+def mark_event_resolved(request, event_id):
+    event = get_object_or_404(SecurityEvent, id=event_id)
+    event.resolved = True
+    event.save()
+
+    _log_line(f"✅ Evento resuelto: {event_id}", key=f"ev_res_{event_id}", throttle_sec=0.5)
+    return JsonResponse({"status": "success"})
 
 
-class CameraView(TemplateView):
+# =========================
+# Views
+# =========================
+class CameraView(LoginRequiredMixin, TemplateView):
     template_name = "camera/camera.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-
         cameras = Camera.objects.filter(is_active=True).order_by("id")
-
         context["cameras"] = cameras
         context["selected_camera"] = cameras.first()
-
         return context
 
 
-class AlertaView(TemplateView):
+class AlertaView(LoginRequiredMixin, TemplateView):
     template_name = "alertas/alerta.html"

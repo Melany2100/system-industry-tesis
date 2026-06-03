@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.utils import timezone
 
 class AuthorizedPerson(models.Model):
     #user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -51,6 +52,7 @@ class SecurityEvent(models.Model):
     EVENT_TYPES = (
         ('face_recognized', 'Rostro reconocido'),
         ('face_unknown', 'Rostro desconocido'),
+        ('authorized_object', 'Objeto autorizado'),
         ('dangerous_object', 'Objeto peligroso detectado'),
         ('unauthorized_access', 'Acceso no autorizado'),
     )
@@ -64,7 +66,8 @@ class SecurityEvent(models.Model):
         User,
         on_delete=models.SET_NULL,
         null=True,
-        blank=True
+        blank=True,
+        related_name='related_security_events',
     )
 
     authorized_person = models.ForeignKey(
@@ -74,6 +77,24 @@ class SecurityEvent(models.Model):
         blank=True,
         related_name='security_events'
     )
+
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_security_events'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    managed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='managed_security_events'
+    )
+    managed_at = models.DateTimeField(null=True, blank=True)
 
     camera = models.ForeignKey(
         'Camera',
@@ -89,7 +110,8 @@ class SecurityEvent(models.Model):
         verbose_name_plural = 'Eventos de Seguridad'
 
     def __str__(self):
-        return f"{self.get_event_type_display()} - {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        local_timestamp = timezone.localtime(self.timestamp)
+        return f"{self.get_event_type_display()} - {local_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
 
     #def get_image_url(self):
     #    if self.image_path:
@@ -106,9 +128,13 @@ class SecurityEvent(models.Model):
 
 
     def get_person_name(self):
+        if self.authorized_person:
+            return self.authorized_person.get_full_name() or "Persona autorizada"
+
         if self.related_user:
             full_name = self.related_user.get_full_name().strip()
             return full_name if full_name else self.related_user.username
+
         return "Desconocido"
 
 

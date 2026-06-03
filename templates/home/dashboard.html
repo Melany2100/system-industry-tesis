@@ -19,6 +19,7 @@
     </div>
 
     <div class="dashboard-heading__actions">
+      {% if is_admin_user %}
       <a href="{% url 'camera' %}" class="dashboard-btn dashboard-btn--primary">
         <i class="bi bi-camera-video"></i>
         Ver cámara
@@ -28,6 +29,12 @@
         <i class="bi bi-file-earmark-text"></i>
         Informes
       </a>
+      {% else %}
+      <a href="{% url 'alerta' %}" class="dashboard-btn dashboard-btn--primary">
+        <i class="bi bi-shield-exclamation"></i>
+        Ver alertas
+      </a>
+      {% endif %}
     </div>
   </div>
 
@@ -55,6 +62,7 @@
       <p>Eventos peligrosos o accesos no autorizados pendientes.</p>
     </a>
 
+    {% if is_admin_user %}
     <a href="{% url 'lista_informes' %}" class="metric-card">
       <div class="metric-card__top">
         <span>Informes hoy</span>
@@ -63,6 +71,7 @@
       <strong>{{ informes_today }}</strong>
       <p>Informes registrados en el sistema durante el día.</p>
     </a>
+    {% endif %}
 
     <div class="metric-card">
       <div class="metric-card__top">
@@ -213,6 +222,7 @@
       </div>
     </div>
 
+    {% if is_admin_user %}
     <!-- Informes recientes -->
     <div class="dashboard-card dashboard-card--projects">
       <div class="dashboard-card__header dashboard-card__header--row">
@@ -254,6 +264,7 @@
         {% endfor %}
       </div>
     </div>
+    {% endif %}
 
     <!-- Cumplimiento EPP -->
     <div class="dashboard-card dashboard-card--tracker">

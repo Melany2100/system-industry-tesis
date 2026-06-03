@@ -35,12 +35,14 @@
           </a>
         </li>
 
+        {% if is_admin_user %}
         <li class="custom-sidenav__item">
           <a class="custom-sidenav__link {% if segment == 'camera' %}active{% endif %}" href="{% url 'camera' %}">
             <i class="bi bi-camera-video"></i>
             <span>Cámara</span>
           </a>
         </li>
+        {% endif %}
 
         <li class="custom-sidenav__item">
           <a class="custom-sidenav__link {% if segment == 'alerta' %}active{% endif %}" href="{% url 'alerta' %}">
@@ -49,12 +51,14 @@
           </a>
         </li>
 
+        {% if is_admin_user %}
         <li class="custom-sidenav__item">
           <a class="custom-sidenav__link {% if segment == 'lista_informes' %}active{% endif %}" href="{% url 'lista_informes' %}">
             <i class="bi bi-file-earmark-text"></i>
             <span>Informe</span>
           </a>
         </li>
+        {% endif %}
 
       </ul>
     </div>
@@ -87,9 +91,15 @@
       <h4>Sistema activo</h4>
       <p>Monitoreo de riesgos industriales en tiempo real.</p>
 
+      {% if is_admin_user %}
       <a href="{% url 'camera' %}" class="custom-sidenav__card-btn">
         Ver cámara
       </a>
+      {% else %}
+      <a href="{% url 'alerta' %}" class="custom-sidenav__card-btn">
+        Ver alertas
+      </a>
+      {% endif %}
     </div>
 
     <!-- Logout -->

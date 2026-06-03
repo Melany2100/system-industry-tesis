@@ -52,6 +52,8 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'timestamp',
         'resolved',
         'related_user',
+        'reviewed_by',
+        'managed_by',
     )
 
     list_filter = (
@@ -59,6 +61,8 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'resolved',
         'camera',
         'timestamp',
+        'reviewed_at',
+        'managed_at',
     )
 
     search_fields = (
@@ -66,4 +70,6 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'authorized_person__nombres',
         'authorized_person__apellidos',
         'authorized_person__correo',
+        'reviewed_by__username',
+        'managed_by__username',
     )

@@ -2,20 +2,28 @@ from core_apps.camera.utils import cv2
 
 import os
 import json
+import re
 import time
 import traceback
 from collections import deque
-from threading import Lock
+from datetime import datetime, timedelta
+from threading import Event, Lock, Thread
 
 from django.conf import settings
+from django.db import close_old_connections
+from django.db.models import Count, Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
-from django.views.decorators import gzip
+from django.utils import timezone
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView
 
 from .models import AuthorizedPerson, SecurityEvent, Camera
 from core_apps.camera.utils import create_security_event, can_save_event, save_authorized_face_image
+from core_apps.common.permissions import get_authorized_person_for_user, is_admin_user
 
 # =========================
 # LIVE LOG (RAM) - incremental
@@ -24,6 +32,236 @@ _LIVE_LOG = deque(maxlen=300)
 _LOG_LOCK = Lock()
 _LOG_SEQ = 0
 _LAST_LOG_TS: dict[str, float] = {}
+
+
+def _display_user(user):
+    if not user:
+        return ""
+
+    full_name = user.get_full_name().strip()
+    return full_name or user.username
+
+
+def _can_view_event_evidence(user, event, user_authorized_person=None):
+    if not user or not user.is_authenticated:
+        return False
+
+    if is_admin_user(user):
+        return True
+
+    if user_authorized_person is None:
+        user_authorized_person = get_authorized_person_for_user(user)
+
+    return (
+        user_authorized_person is not None
+        and event.authorized_person_id == user_authorized_person.id
+    )
+
+
+def _json_forbidden(message="No tienes permisos para realizar esta accion."):
+    return JsonResponse({"success": False, "message": message}, status=403)
+
+
+class AdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
+    login_url = "/login/"
+    raise_exception = True
+
+    def test_func(self):
+        return is_admin_user(self.request.user)
+
+
+def _format_local_datetime(value):
+    if value is None:
+        return ""
+
+    return timezone.localtime(value).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _normalize_alert_level(value, default="MEDIO"):
+    if not value:
+        return default
+
+    level = str(value).strip().upper().replace("Í", "I")
+
+    if level == "BAJA":
+        return "BAJO"
+
+    if level == "MEDIA":
+        return "MEDIO"
+
+    if level == "ALTA":
+        return "ALTO"
+
+    if level in ALERT_LEVELS:
+        return level
+
+    return default
+
+
+def _alert_level_meta(level):
+    normalized = _normalize_alert_level(level)
+    meta = ALERT_LEVELS.get(normalized, ALERT_LEVELS["MEDIO"])
+
+    return {
+        "priority": normalized,
+        "priority_label": normalized,
+        "priority_class": meta["className"],
+        "priority_icon": meta["icon"],
+    }
+
+
+def _extract_alert_level(details, event_type=None):
+    match = ALERT_LEVEL_PATTERN.search(details or "")
+
+    if match:
+        return _normalize_alert_level(match.group(1))
+
+    return DEFAULT_EVENT_LEVELS.get(event_type, "MEDIO")
+
+
+def _event_detection_count(event, detection_counts=None):
+    if not event.authorized_person_id:
+        return 0
+
+    if detection_counts is not None:
+        return detection_counts.get(event.authorized_person_id, 0)
+
+    return SecurityEvent.objects.filter(
+        authorized_person_id=event.authorized_person_id
+    ).count()
+
+
+def _detection_counts_for_people(person_ids):
+    person_ids = [person_id for person_id in person_ids if person_id]
+
+    if not person_ids:
+        return {}
+
+    return {
+        item["authorized_person_id"]: item["total"]
+        for item in (
+            SecurityEvent.objects
+            .filter(authorized_person_id__in=person_ids)
+            .values("authorized_person_id")
+            .annotate(total=Count("id"))
+        )
+    }
+
+
+def _event_payload(
+    event,
+    include_image_path=False,
+    request_user=None,
+    user_authorized_person=None,
+    detection_counts=None,
+):
+    level = _extract_alert_level(event.details, event.event_type)
+    can_manage = bool(request_user and is_admin_user(request_user))
+    can_view_evidence = _can_view_event_evidence(
+        request_user,
+        event,
+        user_authorized_person=user_authorized_person,
+    )
+    payload = {
+        "id": event.id,
+        "event_type": event.event_type,
+        "event_type_display": event.get_event_type_display(),
+        "details": event.details,
+        "timestamp": _format_local_datetime(event.timestamp),
+        "resolved": event.resolved,
+        "identified_person": event.get_person_name(),
+        "identified_person_id": event.authorized_person_id,
+        "detection_count": _event_detection_count(event, detection_counts=detection_counts),
+        "reviewed_by": _display_user(event.reviewed_by),
+        "reviewed_at": _format_local_datetime(event.reviewed_at),
+        "managed_by": _display_user(event.managed_by),
+        "managed_at": _format_local_datetime(event.managed_at),
+        "can_view_evidence": can_view_evidence,
+        "can_manage": can_manage,
+        "can_resolve": can_manage and not event.resolved,
+        **_alert_level_meta(level),
+    }
+
+    image_url = event.get_image_url() if can_view_evidence and hasattr(event, "get_image_url") else None
+
+    if include_image_path:
+        payload["image_path"] = image_url
+    else:
+        payload["image_url"] = image_url
+        payload["camera"] = event.camera.nombre if event.camera else "Sin cámara"
+        payload["user"] = event.related_user.username if getattr(event, "related_user", None) else "Sistema"
+
+    return payload
+
+
+def _requested_alert_level(value):
+    return _normalize_alert_level(value, default="") if value else ""
+
+
+def _local_day_bounds(date_value):
+    if not date_value:
+        return None
+
+    try:
+        parsed_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    current_timezone = timezone.get_current_timezone()
+    start = timezone.make_aware(
+        datetime.combine(parsed_date, datetime.min.time()),
+        current_timezone,
+    )
+
+    return start, start + timedelta(days=1)
+
+
+def _filtered_security_events_queryset(request):
+    queryset = SecurityEvent.objects.select_related(
+        "camera",
+        "related_user",
+        "authorized_person",
+        "reviewed_by",
+        "managed_by",
+    ).all()
+    event_type = (request.GET.get("type") or request.GET.get("event_type") or "").strip()
+    search = (request.GET.get("q") or "").strip()
+    date_bounds = _local_day_bounds((request.GET.get("date") or "").strip())
+    valid_event_types = {choice[0] for choice in SecurityEvent.EVENT_TYPES}
+
+    if event_type in valid_event_types:
+        queryset = queryset.filter(event_type=event_type)
+
+    if date_bounds:
+        start, end = date_bounds
+        queryset = queryset.filter(timestamp__gte=start, timestamp__lt=end)
+
+    if search:
+        matching_display_types = [
+            value
+            for value, label in SecurityEvent.EVENT_TYPES
+            if search.lower() in label.lower()
+        ]
+        search_filter = (
+            Q(event_type__icontains=search)
+            | Q(details__icontains=search)
+            | Q(related_user__username__icontains=search)
+            | Q(camera__nombre__icontains=search)
+            | Q(authorized_person__nombres__icontains=search)
+            | Q(authorized_person__apellidos__icontains=search)
+            | Q(authorized_person__correo__icontains=search)
+            | Q(reviewed_by__username__icontains=search)
+            | Q(managed_by__username__icontains=search)
+        )
+
+        if matching_display_types:
+            search_filter |= Q(event_type__in=matching_display_types)
+
+        queryset = queryset.filter(
+            search_filter
+        )
+
+    return queryset.order_by("-timestamp")
 
 
 
@@ -37,6 +275,58 @@ FACE_OVERLAP_THRESHOLD = 0.20
 ANIMAL_CLASSES = {"cat", "dog", "bird"}
 DEFAULT_OBJECT_CONFIDENCE = 0.35
 ANIMAL_OBJECT_CONFIDENCE = 0.20
+
+PPE_INFERENCE_IMGSZ = 960
+PPE_MODEL_CONFIDENCE = 0.25
+PPE_CONFIRMATION_FRAMES = 2
+PPE_ITEM_OVERLAP_THRESHOLD = 0.10
+PPE_VIOLATION_TTL_SECONDS = 6.0
+PPE_REQUIRED_ITEMS = ("mask", "gloves", "earmuffs")
+PPE_CLASS_CONFIDENCE = {
+    "person": 0.45,
+    "hardhat": 0.45,
+    "mask": 0.40,
+    "gloves": 0.45,
+    "earmuffs": 0.45,
+    "safety vest": 0.45,
+    "no-hardhat": 0.65,
+    "no-mask": 0.65,
+    "no-gloves": 0.65,
+    "no-earmuffs": 0.65,
+    "no-safety vest": 0.65,
+    "safety cone": 0.50,
+    "machinery": 0.50,
+    "vehicle": 0.50,
+}
+ALERT_LEVELS = {
+    "BAJO": {
+        "className": "success",
+        "icon": "fa-circle-check",
+    },
+    "MEDIO": {
+        "className": "warning",
+        "icon": "fa-circle-exclamation",
+    },
+    "ALTO": {
+        "className": "danger",
+        "icon": "fa-triangle-exclamation",
+    },
+    "CRITICO": {
+        "className": "critical",
+        "icon": "fa-radiation",
+    },
+}
+DEFAULT_EVENT_LEVELS = {
+    "face_recognized": "BAJO",
+    "face_unknown": "MEDIO",
+    "authorized_object": "BAJO",
+    "dangerous_object": "ALTO",
+    "unauthorized_access": "ALTO",
+}
+ALERT_LEVEL_PATTERN = re.compile(
+    r"(?:nivel|prioridad)\s*:\s*(BAJO|BAJA|MEDIO|MEDIA|ALTO|ALTA|CRITICO|CRÍTICO)",
+    re.IGNORECASE,
+)
 
 
 def _safe_event_key(value: str) -> str:
@@ -63,6 +353,106 @@ def _intersection_area(box_a, box_b) -> int:
 def _box_center(box):
     x1, y1, x2, y2 = box
     return (x1 + x2) // 2, (y1 + y2) // 2
+
+
+def _normalize_ppe_label(label) -> str:
+    return str(label).strip().lower().replace("_", "-")
+
+
+def _passes_ppe_confidence(label: str, confidence: float) -> bool:
+    min_confidence = PPE_CLASS_CONFIDENCE.get(label, 0.55)
+    return confidence >= min_confidence
+
+
+def _get_supported_required_ppe_items(names) -> tuple[str, ...]:
+    model_labels = {
+        _normalize_ppe_label(label)
+        for label in (names.values() if hasattr(names, "values") else names)
+    }
+
+    return tuple(
+        item for item in PPE_REQUIRED_ITEMS
+        if item in model_labels or f"no-{item}" in model_labels
+    )
+
+
+def _is_ppe_item_inside_person(person_box, item_box) -> bool:
+    item_area = _box_area(item_box)
+
+    if item_area <= 0:
+        return False
+
+    overlap_ratio = _intersection_area(person_box, item_box) / float(item_area)
+
+    if overlap_ratio >= PPE_ITEM_OVERLAP_THRESHOLD:
+        return True
+
+    item_cx, item_cy = _box_center(item_box)
+    px1, py1, px2, py2 = person_box
+
+    return px1 <= item_cx <= px2 and py1 <= item_cy <= py2
+
+
+def _ppe_violation_key(camera_id, person_box, violation_type, base_msg):
+    cx, cy = _box_center(person_box)
+    grid_x = cx // 120
+    grid_y = cy // 120
+
+    return (
+        f"{camera_id}:{grid_x}:{grid_y}:"
+        f"{violation_type}:{_safe_event_key(base_msg)}"
+    )
+
+
+def _track_ppe_violation(memory, key, now):
+    entry = memory.get(key, {"count": 0})
+    entry["count"] += 1
+    entry["last_seen"] = now
+    memory[key] = entry
+
+    return entry["count"] >= PPE_CONFIRMATION_FRAMES, entry["count"]
+
+
+def _prune_ppe_violations(memory, observed_keys, now):
+    for key in list(memory.keys()):
+        last_seen = memory[key].get("last_seen", 0.0)
+
+        if key not in observed_keys or now - last_seen > PPE_VIOLATION_TTL_SECONDS:
+            del memory[key]
+
+
+def _format_duration(seconds):
+    seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {remaining_seconds}s"
+
+    if minutes:
+        return f"{minutes}m {remaining_seconds}s"
+
+    return f"{remaining_seconds}s"
+
+
+def _track_object_duration(memory, label, now):
+    entry = memory.get(label)
+
+    if entry is None:
+        entry = {"first_seen": now, "last_seen": now}
+        memory[label] = entry
+    else:
+        entry["last_seen"] = now
+
+    return now - entry["first_seen"]
+
+
+def _prune_object_presence(memory, observed_labels, now, ttl_seconds=4.0):
+    for label in list(memory.keys()):
+        last_seen = memory[label].get("last_seen", 0.0)
+
+        if label not in observed_labels or now - last_seen > ttl_seconds:
+            del memory[label]
 
 
 def _match_identity_to_person_box(person_box, detected_faces):
@@ -207,7 +597,7 @@ def _log_line(message: str, key: str | None = None, throttle_sec: float = 0.0) -
             return
         _LAST_LOG_TS[key] = now
 
-    ts = time.strftime("%H:%M:%S")
+    ts = timezone.localtime().strftime("%H:%M:%S")
 
     with _LOG_LOCK:
         _LOG_SEQ += 1
@@ -264,6 +654,27 @@ def _safe_import_ultralytics():
         return None
 
 
+_FACE_RECOGNITION_CACHE = {"module": None, "attempted": False}
+_IMPORT_CACHE_LOCK = Lock()
+
+
+def _load_face_recognition():
+    with _IMPORT_CACHE_LOCK:
+        if _FACE_RECOGNITION_CACHE["attempted"]:
+            return _FACE_RECOGNITION_CACHE["module"]
+
+        face_recognition = _safe_import_face_recognition()
+        _FACE_RECOGNITION_CACHE["module"] = face_recognition
+        _FACE_RECOGNITION_CACHE["attempted"] = True
+
+    if face_recognition is None:
+        _log_line("face_recognition no disponible: usando Haar Cascade", key="face_rec_missing", throttle_sec=10)
+    else:
+        _log_line("face_recognition cargado", key="face_rec_loaded", throttle_sec=10)
+
+    return face_recognition
+
+
 # =========================
 # YOLOv3-tiny (OpenCV DNN)
 # =========================
@@ -293,77 +704,85 @@ YOLO_CONFIG = {
 # event_type debe coincidir con los choices del modelo SecurityEvent.
 OBJECT_RULES = {
     "knife": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: cuchillo",
-        "priority": "Alta",
-        "color": (0, 0, 255),
+        "event_type": "authorized_object",
+        "message": "Objeto autorizado detectado: estilete/cuchillo",
+        "priority": "BAJO",
+        "color": (0, 255, 0),
     },
     "scissors": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: tijeras",
-        "priority": "Alta",
-        "color": (0, 0, 255),
+        "event_type": "authorized_object",
+        "message": "Objeto autorizado detectado: tijeras",
+        "priority": "BAJO",
+        "color": (0, 255, 0),
     },
     "baseball bat": {
         "event_type": "dangerous_object",
         "message": "Objeto contundente detectado",
-        "priority": "Alta",
+        "priority": "ALTO",
         "color": (0, 0, 255),
     },
     "bottle": {
         "event_type": "dangerous_object",
         "message": "Botella detectada en zona monitoreada",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 165, 255),
     },
     "cell phone": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: celular",
-        "priority": "Media",
+        "event_type": "authorized_object",
+        "message": "Objeto autorizado detectado: celular",
+        "priority": "MEDIO",
         "color": (0, 255, 255),
+        "track_duration": True,
     },
     "backpack": {
         "event_type": "unauthorized_access",
         "message": "Objeto no autorizado detectado: mochila",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 255, 255),
     },
     "handbag": {
         "event_type": "unauthorized_access",
         "message": "Objeto no autorizado detectado: bolso",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 255, 255),
     },
     "suitcase": {
         "event_type": "unauthorized_access",
         "message": "Objeto no autorizado detectado: maleta",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 255, 255),
     },
     "cat": {
         "event_type": "unauthorized_access",
         "message": "Animal detectado en zona monitoreada: gato",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 165, 255),
     },
     "dog": {
         "event_type": "unauthorized_access",
         "message": "Animal detectado en zona monitoreada: perro",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 165, 255),
     },
     "bird": {
         "event_type": "unauthorized_access",
         "message": "Animal detectado en zona monitoreada: pájaro",
-        "priority": "Media",
+        "priority": "MEDIO",
         "color": (0, 165, 255),
     },
 }
 
 _YOLO_CACHE = {"net": None, "classes": None}
+_YOLO_LOAD_LOCK = Lock()
+_YOLO_INFERENCE_LOCK = Lock()
 
 
 def _load_yolo():
+    with _YOLO_LOAD_LOCK:
+        return _load_yolo_locked()
+
+
+def _load_yolo_locked():
     if _YOLO_CACHE["net"] is not None and _YOLO_CACHE["classes"] is not None:
         return _YOLO_CACHE["net"], _YOLO_CACHE["classes"]
 
@@ -398,9 +817,16 @@ def _load_yolo():
 # PPE (Ultralytics)
 # =========================
 _PPE_CACHE = {"model": None}
+_PPE_LOAD_LOCK = Lock()
+_PPE_INFERENCE_LOCK = Lock()
 
 
 def _load_ppe_model():
+    with _PPE_LOAD_LOCK:
+        return _load_ppe_model_locked()
+
+
+def _load_ppe_model_locked():
     if _PPE_CACHE["model"] is not None:
         return _PPE_CACHE["model"]
 
@@ -424,10 +850,58 @@ def _load_ppe_model():
         return None
 
 
+_MODEL_PRELOAD_LOCK = Lock()
+_MODEL_PRELOAD_DONE = Event()
+_MODEL_PRELOAD_STARTED = False
+
+
+def _preload_camera_models_task():
+    try:
+        _safe_import_cv2()
+        _safe_import_numpy()
+        _load_yolo()
+        _load_ppe_model()
+        _load_face_recognition()
+        _log_line("Modelos de camara precargados", key="models_preloaded", throttle_sec=10)
+    finally:
+        _MODEL_PRELOAD_DONE.set()
+
+
+def preload_camera_models(async_load: bool = True):
+    global _MODEL_PRELOAD_STARTED
+
+    with _MODEL_PRELOAD_LOCK:
+        if _MODEL_PRELOAD_STARTED:
+            return
+
+        _MODEL_PRELOAD_STARTED = True
+
+    if async_load:
+        Thread(
+            target=_preload_camera_models_task,
+            name="camera-model-preload",
+            daemon=True,
+        ).start()
+    else:
+        _preload_camera_models_task()
+
+
+def _attach_preloaded_models():
+    if not _MODEL_PRELOAD_DONE.is_set():
+        return None, None, None, None
+
+    return (
+        _YOLO_CACHE["net"],
+        _YOLO_CACHE["classes"],
+        _PPE_CACHE["model"],
+        _FACE_RECOGNITION_CACHE["module"],
+    )
+
+
 # =========================
 # Frames (con FPS lento)
 # =========================
-def gen_frames(camera: Camera, target_fps: int = 10):
+def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, should_stop=None):
     cv2 = _safe_import_cv2()
     np = _safe_import_numpy()
 
@@ -435,8 +909,12 @@ def gen_frames(camera: Camera, target_fps: int = 10):
         _log_line("❌ Falta cv2 o numpy", key="deps_missing", throttle_sec=5)
         return
 
-    net, coco_classes = _load_yolo()
-    ppe_model = _load_ppe_model()
+    preload_camera_models(async_load=True)
+    net = None
+    coco_classes = None
+    ppe_model = None
+    face_rec = None
+    models_attached = False
 
     camera_source = camera.get_video_source()
     camera_name = camera.nombre
@@ -456,12 +934,13 @@ def gen_frames(camera: Camera, target_fps: int = 10):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
     # Face recognition setup
-    face_rec = _safe_import_face_recognition()
     last_face_db_sync = 0.0
     known_face_encodings = []
     known_face_metadata = []
     current_faces = []
     last_detected_faces = []
+    ppe_violation_memory = {}
+    object_presence_memory = {}
 
     frame_counter = 0
     last_ppe_event_frame = -999
@@ -478,7 +957,21 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
     try:
         while True:
+            if should_stop is not None and should_stop():
+                break
+
             now = time.monotonic()
+
+            if not models_attached and _MODEL_PRELOAD_DONE.is_set():
+                net, coco_classes, ppe_model, face_rec = _attach_preloaded_models()
+                models_attached = True
+
+                if net is not None or ppe_model is not None or face_rec is not None:
+                    _log_line(
+                        f"Modelos activos para {camera_name}",
+                        key=f"models_ready_{camera.id}",
+                        throttle_sec=10,
+                    )
 
             if now < next_frame_at:
                 time.sleep(next_frame_at - now)
@@ -506,6 +999,7 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                         known_face_encodings = []
                         known_face_metadata = []
                         try:
+                            close_old_connections()
                             for person in AuthorizedPerson.objects.filter(is_active=True):
                                 try:
                                     enc = json.loads(person.face_encoding)
@@ -682,11 +1176,13 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                     crop=False
                 )
 
-                net.setInput(blob)
-                outs = net.forward(net.getUnconnectedOutLayersNames())
+                with _YOLO_INFERENCE_LOCK:
+                    net.setInput(blob)
+                    outs = net.forward(net.getUnconnectedOutLayersNames())
 
                 height, width = frame.shape[:2]
                 boxes, confs, class_ids = [], [], []
+                observed_object_labels = set()
 
                 for out in outs:
                     for det in out:
@@ -738,9 +1234,21 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                         priority = rule["priority"]
                         message = rule["message"]
                         color = rule["color"]
+                        extra_details = []
+                        duration_text = None
+                        observed_object_labels.add(label)
+
+                        if rule.get("track_duration"):
+                            duration_seconds = _track_object_duration(
+                                object_presence_memory,
+                                label,
+                                now,
+                            )
+                            duration_text = _format_duration(duration_seconds)
+                            extra_details.append(f"Tiempo de uso: {duration_text}")
 
                         _log_line(
-                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | {priority}",
+                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | Nivel {priority}",
                             key=f"obj_{camera.id}_{label}",
                             throttle_sec=0.25,
                         )
@@ -749,7 +1257,8 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                         cv2.putText(
                             frame,
-                            f"{label}: {conf:.2f} | {priority}",
+                            f"{label}: {conf:.2f} | {priority}"
+                            + (f" | {duration_text}" if duration_text else ""),
                             (x, max(y - 10, 20)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
@@ -761,9 +1270,16 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                         if can_save_event(event_key, seconds=20):
                             try:
+                                details = (
+                                    f"{message} | Nivel: {priority} | Confianza: {conf:.2f}"
+                                )
+
+                                if extra_details:
+                                    details += " | " + " | ".join(extra_details)
+
                                 create_security_event(
                                     event_type=event_type,
-                                    details=f"{message} | Prioridad: {priority} | Confianza: {conf:.2f}",
+                                    details=details,
                                     frame=frame.copy(),
                                     user=None,
                                     camera=camera,
@@ -783,31 +1299,41 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                                     throttle_sec=5,
                                 )
 
+                _prune_object_presence(object_presence_memory, observed_object_labels, now)
+
             # PPE
             if ppe_model is not None and frame_counter % 15 == 0:
                 try:
-                    res = ppe_model(frame, verbose=False)[0]
+                    with _PPE_INFERENCE_LOCK:
+                        res = ppe_model(
+                            frame,
+                            verbose=False,
+                            imgsz=PPE_INFERENCE_IMGSZ,
+                            conf=PPE_MODEL_CONFIDENCE,
+                        )[0]
                     boxes = res.boxes
                     names = res.names
+                    supported_required_ppe_items = _get_supported_required_ppe_items(names)
 
                     persons = []
                     items = []
+                    observed_ppe_violation_keys = set()
 
                     for b in boxes:
                         cls_id = int(b.cls[0])
-                        label = str(names.get(cls_id, cls_id)).lower()
+                        label = _normalize_ppe_label(names.get(cls_id, cls_id))
                         conf = float(b.conf[0])
                         x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
 
-                        if conf < 0.55:
+                        if not _passes_ppe_confidence(label, conf):
                             continue
 
                         if label == "person":
-                            persons.append((x1, y1, x2, y2))
+                            persons.append((x1, y1, x2, y2, conf))
                         else:
                             items.append((label, conf, x1, y1, x2, y2))
 
-                    for (px1, py1, px2, py2) in persons:
+                    for (px1, py1, px2, py2, _person_conf) in persons:
                         identity = _match_identity_to_person_box(
                             (px1, py1, px2, py2),
                             last_detected_faces
@@ -825,10 +1351,10 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                         negatives = set()
 
                         for (label, conf, x1, y1, x2, y2) in items:
-                            cx = (x1 + x2) // 2
-                            cy = (y1 + y2) // 2
-
-                            if px1 <= cx <= px2 and py1 <= cy <= py2:
+                            if _is_ppe_item_inside_person(
+                                (px1, py1, px2, py2),
+                                (x1, y1, x2, y2)
+                            ):
                                 present.add(label)
 
                                 if label.startswith("no-"):
@@ -836,7 +1362,40 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                         if negatives:
                             base_msg = "⚠ Indumentaria incorrecta: " + ", ".join(sorted([x.upper() for x in negatives]))
-                            msg = f"{base_msg} | Persona: {person_name} | Estado: {auth_status}"
+                            msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            violation_key = _ppe_violation_key(
+                                camera.id,
+                                (px1, py1, px2, py2),
+                                "negative",
+                                base_msg,
+                            )
+                            observed_ppe_violation_keys.add(violation_key)
+                            is_confirmed, confirmation_count = _track_ppe_violation(
+                                ppe_violation_memory,
+                                violation_key,
+                                now,
+                            )
+
+                            if not is_confirmed:
+                                _log_line(
+                                    f"PPE [{camera_name}]: verificando {base_msg} ({confirmation_count}/{PPE_CONFIRMATION_FRAMES})",
+                                    key=f"ppe_pending_neg_{camera.id}_{_safe_event_key(base_msg)}",
+                                    throttle_sec=1.2
+                                )
+
+                                cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 165, 255), 2)
+
+                                cv2.putText(
+                                    frame,
+                                    "Verificando EPP...",
+                                    (px1, max(py1 - 10, 20)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.7,
+                                    (0, 165, 255),
+                                    2
+                                )
+
+                                continue
 
                             _log_line(
                                 f"PPE [{camera_name}]: {msg}",
@@ -872,18 +1431,46 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                         missing = []
 
-                        if "hardhat" not in present:
-                            missing.append("hardhat")
-
-                        if "safety vest" not in present:
-                            missing.append("safety vest")
-
-                        if "mask" not in present:
-                            missing.append("mask")
+                        for required_item in supported_required_ppe_items:
+                            if required_item not in present:
+                                missing.append(required_item)
 
                         if missing:
                             base_msg = f"⚠ Falta EPP: {', '.join(missing)}"
-                            msg = f"{base_msg} | Persona: {person_name} | Estado: {auth_status}"
+                            msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            violation_key = _ppe_violation_key(
+                                camera.id,
+                                (px1, py1, px2, py2),
+                                "missing",
+                                base_msg,
+                            )
+                            observed_ppe_violation_keys.add(violation_key)
+                            is_confirmed, confirmation_count = _track_ppe_violation(
+                                ppe_violation_memory,
+                                violation_key,
+                                now,
+                            )
+
+                            if not is_confirmed:
+                                _log_line(
+                                    f"PPE [{camera_name}]: verificando {base_msg} ({confirmation_count}/{PPE_CONFIRMATION_FRAMES})",
+                                    key=f"ppe_pending_missing_{camera.id}_{_safe_event_key(base_msg)}",
+                                    throttle_sec=1.2
+                                )
+
+                                cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 165, 255), 2)
+
+                                cv2.putText(
+                                    frame,
+                                    "Verificando EPP...",
+                                    (px1, max(py1 - 10, 20)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.7,
+                                    (0, 165, 255),
+                                    2
+                                )
+
+                                continue
 
                             _log_line(
                                 f"PPE [{camera_name}]: {msg}",
@@ -934,6 +1521,12 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                                 2
                             )
 
+                    _prune_ppe_violations(
+                        ppe_violation_memory,
+                        observed_ppe_violation_keys,
+                        now,
+                    )
+
                 except Exception as e:
                     _log_line(
                         f"❌ Error PPE detect [{camera_name}]: {e}",
@@ -946,10 +1539,8 @@ def gen_frames(camera: Camera, target_fps: int = 10):
             if not ret:
                 continue
 
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-            )
+            if emit_jpeg is not None:
+                emit_jpeg(buffer.tobytes())
 
     finally:
         cap.release()
@@ -960,14 +1551,168 @@ def gen_frames(camera: Camera, target_fps: int = 10):
             throttle_sec=2
         )
 
+CAMERA_WORKER_IDLE_SECONDS = 45.0
+CAMERA_SIGNAL_TIMEOUT_SECONDS = 4.0
+
+_CAMERA_WORKERS: dict[int, "CameraStreamWorker"] = {}
+_CAMERA_WORKERS_LOCK = Lock()
+
+
+class CameraStreamWorker:
+    def __init__(self, camera: Camera, target_fps: int):
+        self.camera = camera
+        self.camera_id = camera.id
+        self.camera_source = camera.source
+        self.camera_name = camera.nombre
+        self.target_fps = max(1, min(int(target_fps), 30))
+        self._frame_lock = Lock()
+        self._latest_jpeg = None
+        self._latest_at = 0.0
+        self._last_client_at = time.monotonic()
+        self._stop_event = Event()
+        self._finished = Event()
+        self._error = None
+        self._thread = Thread(
+            target=self._run,
+            name=f"camera-stream-{self.camera_id}",
+            daemon=True,
+        )
+
+    def start(self):
+        self._thread.start()
+
+    def matches(self, camera: Camera) -> bool:
+        return self.camera_source == camera.source and self.camera_name == camera.nombre
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive() and not self._finished.is_set()
+
+    def touch(self):
+        self._last_client_at = time.monotonic()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def should_stop(self) -> bool:
+        if self._stop_event.is_set():
+            return True
+
+        idle_for = time.monotonic() - self._last_client_at
+        return idle_for > CAMERA_WORKER_IDLE_SECONDS
+
+    def publish_frame(self, jpeg_bytes: bytes):
+        with self._frame_lock:
+            self._latest_jpeg = jpeg_bytes
+            self._latest_at = time.monotonic()
+
+    def get_frame(self):
+        with self._frame_lock:
+            return self._latest_jpeg
+
+    def get_latest_at(self):
+        with self._frame_lock:
+            return self._latest_at
+
+    def clear_frame(self):
+        with self._frame_lock:
+            self._latest_jpeg = None
+            self._latest_at = 0.0
+
+    def has_fresh_frame(self):
+        with self._frame_lock:
+            if self._latest_jpeg is None or not self._latest_at:
+                return False
+
+            return (time.monotonic() - self._latest_at) <= CAMERA_SIGNAL_TIMEOUT_SECONDS
+
+    def has_stopped(self) -> bool:
+        return self._finished.is_set()
+
+    def get_error(self):
+        return self._error
+
+    def _run(self):
+        try:
+            _run_camera_pipeline(
+                camera=self.camera,
+                target_fps=self.target_fps,
+                emit_jpeg=self.publish_frame,
+                should_stop=self.should_stop,
+            )
+        except Exception as e:
+            self._error = str(e)
+            _log_line(
+                f"Error en worker de camara {self.camera_name}: {e}",
+                key=f"worker_error_{self.camera_id}",
+                throttle_sec=5,
+            )
+        finally:
+            self.clear_frame()
+            close_old_connections()
+            self._finished.set()
+
+
+def _get_or_start_camera_worker(camera: Camera, target_fps: int) -> CameraStreamWorker:
+    with _CAMERA_WORKERS_LOCK:
+        worker = _CAMERA_WORKERS.get(camera.id)
+
+        if worker is None or not worker.is_alive() or not worker.matches(camera):
+            if worker is not None:
+                worker.stop()
+
+            worker = CameraStreamWorker(camera=camera, target_fps=target_fps)
+            _CAMERA_WORKERS[camera.id] = worker
+            worker.start()
+
+        worker.touch()
+        return worker
+
+
+def gen_frames(camera: Camera, target_fps: int = 10):
+    worker = _get_or_start_camera_worker(camera, target_fps)
+    target_fps = max(1, min(int(target_fps), 30))
+    frame_interval = 1.0 / float(target_fps)
+
+    while True:
+        worker.touch()
+
+        if worker.has_stopped():
+            error = worker.get_error()
+
+            if error:
+                _log_line(
+                    f"Stream finalizado por error [{camera.nombre}]: {error}",
+                    key=f"stream_error_{camera.id}",
+                    throttle_sec=5,
+                )
+
+            break
+
+        jpeg = worker.get_frame()
+
+        if jpeg is None:
+            time.sleep(0.05)
+            continue
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+        )
+
+        time.sleep(frame_interval)
+
+
 def _get_request_fps(request):
     try:
         return int(request.GET.get("fps", "5"))
     except ValueError:
         return 5
 
-@gzip.gzip_page
+@login_required(login_url="/login/")
 def video_feed(request, camera_id):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
+
     cv2 = _safe_import_cv2()
 
     if cv2 is None:
@@ -981,8 +1726,11 @@ def video_feed(request, camera_id):
         content_type="multipart/x-mixed-replace;boundary=frame",
     )
 
-@gzip.gzip_page
+@login_required(login_url="/login/")
 def video_feed_default(request):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
+
     cv2 = _safe_import_cv2()
 
     if cv2 is None:
@@ -1006,9 +1754,110 @@ def video_feed_default(request):
         content_type="multipart/x-mixed-replace;boundary=frame",
     )
 
+@login_required(login_url="/login/")
+def camera_status(request, camera_id):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede consultar el estado de camara.")
+
+    """
+    Estado real de la cámara:
+    - active: habilitada y con frames recientes
+    - inactive: desactivada en base de datos
+    - no_signal: habilitada, pero sin señal real
+    """
+    camera = get_object_or_404(Camera, id=camera_id)
+
+    if not camera.is_active:
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "inactive",
+            "label": "Inactiva",
+            "message": "La cámara está desactivada en el sistema.",
+            "tone": "secondary",
+        })
+
+    with _CAMERA_WORKERS_LOCK:
+        worker = _CAMERA_WORKERS.get(camera.id)
+
+    if worker is None:
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "no_signal",
+            "label": "Sin señal",
+            "message": "La cámara está habilitada, pero todavía no se ha iniciado el flujo.",
+            "tone": "warning",
+        })
+
+    if worker.has_stopped():
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "no_signal",
+            "label": "Sin señal",
+            "message": "El flujo de la cámara está detenido o no pudo iniciarse.",
+            "tone": "danger",
+        })
+
+    latest_at = worker.get_latest_at()
+
+    if not latest_at:
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "no_signal",
+            "label": "Sin señal",
+            "message": "La cámara está habilitada, pero no está entregando imagen.",
+            "tone": "warning",
+        })
+
+    seconds_without_signal = time.monotonic() - latest_at
+
+    if seconds_without_signal > CAMERA_SIGNAL_TIMEOUT_SECONDS:
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "no_signal",
+            "label": "Sin señal",
+            "message": f"No se reciben frames desde hace {seconds_without_signal:.1f} segundos.",
+            "tone": "danger",
+            "seconds_without_signal": round(seconds_without_signal, 1),
+        })
+
+    if not worker.has_fresh_frame():
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "no_signal",
+            "label": "Sin señal",
+            "message": "No hay un frame reciente disponible.",
+            "tone": "danger",
+        })
+
+    return JsonResponse({
+        "success": True,
+        "camera_id": camera.id,
+        "name": camera.nombre,
+        "status": "active",
+        "label": "Activa",
+        "message": "La cámara está activa y transmitiendo señal.",
+        "tone": "success",
+        "seconds_without_signal": round(seconds_without_signal, 1),
+    })
 
 @csrf_exempt
+@login_required(login_url="/login/")
 def register_face(request):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede registrar rostros autorizados.")
+
     if request.method != "POST":
         return JsonResponse(
             {"success": False, "message": "Método no permitido."},
@@ -1153,53 +2002,119 @@ def register_face(request):
             status=500
         )
 
+@login_required(login_url="/login/")
 def get_events(request):
-    events = SecurityEvent.objects.order_by("-timestamp")[:50]
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede consultar este listado.")
+
+    events = list(
+        SecurityEvent.objects.select_related(
+            "authorized_person",
+            "reviewed_by",
+            "managed_by",
+        ).order_by("-timestamp")[:50]
+    )
+    detection_counts = _detection_counts_for_people(
+        [event.authorized_person_id for event in events]
+    )
     data = [
-        {
-            "id": event.id,
-            "event_type": event.event_type,
-            "event_type_display": event.get_event_type_display(),
-            "details": event.details,
-            "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            "resolved": event.resolved,
-            "image_path": event.get_image_url() if hasattr(event, "get_image_url") else None,
-        }
+        _event_payload(
+            event,
+            include_image_path=True,
+            request_user=request.user,
+            detection_counts=detection_counts,
+        )
         for event in events
     ]
     return JsonResponse({"events": data})
 
 
 @csrf_exempt
+@login_required(login_url="/login/")
 def mark_event_resolved(request, event_id):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede gestionar eventos.")
+
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
 
     event = get_object_or_404(SecurityEvent, id=event_id)
     event.resolved = True
-    event.save()
+    event.managed_by = request.user
+    event.managed_at = timezone.now()
+    event.save(update_fields=["resolved", "managed_by", "managed_at"])
     _log_line(f"✅ Evento resuelto: {event_id}", key=f"ev_res_{event_id}", throttle_sec=0.5)
     return JsonResponse({"status": "success"})
 
 
+@login_required(login_url="/login/")
 def get_security_events(request):
-    events = SecurityEvent.objects.all().order_by("-timestamp")[:50]
+    events = _filtered_security_events_queryset(request)
+    severity = _requested_alert_level(request.GET.get("severity") or request.GET.get("priority"))
+    max_events_to_scan = 1000 if severity else 50
+    user_authorized_person = get_authorized_person_for_user(request.user)
+    scanned_events = list(events[:max_events_to_scan])
+    detection_counts = _detection_counts_for_people(
+        [event.authorized_person_id for event in scanned_events]
+    )
     events_data = []
-    for event in events:
-        events_data.append(
-            {
-                "id": event.id,
-                "event_type": event.event_type,
-                "event_type_display": event.get_event_type_display(),
-                "details": event.details,
-                "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "resolved": event.resolved,
-                "image_url": event.get_image_url() if hasattr(event, "get_image_url") else None,
-                "camera": event.camera.nombre if event.camera else "Sin cámara",
-                "user": event.related_user.username if getattr(event, "related_user", None) else "Sistema",
-            }
+
+    for event in scanned_events:
+        payload = _event_payload(
+            event,
+            request_user=request.user,
+            user_authorized_person=user_authorized_person,
+            detection_counts=detection_counts,
         )
+
+        if severity and payload["priority"] != severity:
+            continue
+
+        events_data.append(payload)
+
+        if len(events_data) >= 50:
+            break
+
     return JsonResponse({"events": events_data})
+
+
+@login_required(login_url="/login/")
+@require_POST
+def review_security_event(request, event_id):
+    event = get_object_or_404(
+        SecurityEvent.objects.select_related(
+            "authorized_person",
+            "camera",
+            "related_user",
+            "reviewed_by",
+            "managed_by",
+        ),
+        id=event_id,
+    )
+    user_authorized_person = get_authorized_person_for_user(request.user)
+
+    if not _can_view_event_evidence(
+        request.user,
+        event,
+        user_authorized_person=user_authorized_person,
+    ):
+        return _json_forbidden("Solo puedes revisar evidencias asociadas a tu persona autorizada.")
+
+    event.reviewed_by = request.user
+    event.reviewed_at = timezone.now()
+    event.save(update_fields=["reviewed_by", "reviewed_at"])
+
+    detection_counts = _detection_counts_for_people([event.authorized_person_id])
+
+    return JsonResponse({
+        "success": True,
+        "event": _event_payload(
+            event,
+            request_user=request.user,
+            user_authorized_person=user_authorized_person,
+            detection_counts=detection_counts,
+        )
+    })
 
 
 @csrf_exempt
@@ -1207,19 +2122,27 @@ def mark_event_as_resolved(request, event_id):
     return mark_event_resolved(request, event_id)
 
 
-class CameraView(TemplateView):
+class CameraView(AdminRequiredMixin, TemplateView):
     template_name = "camera/camera.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        cameras = Camera.objects.filter(is_active=True).order_by("id")
+        cameras = Camera.objects.all().order_by("id")
+        selected_camera = cameras.filter(is_active=True).first() or cameras.first()
 
+        context["segment"] = "camera"
         context["cameras"] = cameras
-        context["selected_camera"] = cameras.first()
+        context["selected_camera"] = selected_camera
 
         return context
 
 
-class AlertaView(TemplateView):
+class AlertaView(LoginRequiredMixin, TemplateView):
     template_name = "alertas/alerta.html"
+    login_url = "/login/"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["segment"] = "alerta"
+        return context

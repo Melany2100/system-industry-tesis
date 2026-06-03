@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django.views.generic import TemplateView
 
 from .models import AuthorizedPerson, Camera, SecurityEvent
+from core_apps.camera.object_rules import OBJECT_RULES
 from core_apps.camera.utils import (
     can_save_event,
     create_security_event,
@@ -107,67 +108,7 @@ YOLO_CONFIG = {
     "weights": os.path.join(settings.BASE_DIR, "camera", "yolov3-tiny.weights"),
     "cfg": os.path.join(settings.BASE_DIR, "camera", "yolov3-tiny.cfg"),
     "classes": os.path.join(settings.BASE_DIR, "camera", "coco.names"),
-    "monitored_classes": [
-        "knife",
-        "scissors",
-        "baseball bat",
-        "bottle",
-        "cell phone",
-        "backpack",
-        "handbag",
-        "suitcase",
-    ],
-}
-
-OBJECT_RULES = {
-    "knife": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: cuchillo",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "scissors": {
-        "event_type": "dangerous_object",
-        "message": "Objeto cortopunzante detectado: tijeras",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "baseball bat": {
-        "event_type": "dangerous_object",
-        "message": "Objeto contundente detectado",
-        "priority": "Alta",
-        "color": (0, 0, 255),
-    },
-    "bottle": {
-        "event_type": "dangerous_object",
-        "message": "Botella detectada en zona monitoreada",
-        "priority": "Media",
-        "color": (0, 165, 255),
-    },
-    "cell phone": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: celular",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "backpack": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: mochila",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "handbag": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: bolso",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
-    "suitcase": {
-        "event_type": "unauthorized_access",
-        "message": "Objeto no autorizado detectado: maleta",
-        "priority": "Media",
-        "color": (0, 255, 255),
-    },
+    "monitored_classes": list(OBJECT_RULES.keys()),
 }
 
 _YOLO_CACHE = {"net": None, "classes": None}
@@ -205,6 +146,9 @@ def _load_yolo():
         return None, None
 
 
+# =========================
+# PPE (Ultralytics)
+# =========================
 def _load_ppe_model():
     if _PPE_CACHE["model"] is not None:
         return _PPE_CACHE["model"]
@@ -247,6 +191,9 @@ def _open_camera_source(camera: Camera):
     source = camera.get_video_source()
 
     try:
+        if source is None:
+            return None, f"Fuente de video vacía para la cámara: {camera.nombre}"
+
         if isinstance(source, int):
             cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
         else:
@@ -301,6 +248,14 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
     camera_source = camera.get_video_source()
     camera_name = camera.nombre
+
+    if camera_source is None:
+        _log_line(
+            f"❌ Fuente de video vacía para la cámara: {camera_name}",
+            key=f"empty_source_{camera.id}",
+            throttle_sec=10
+        )
+        return
 
     if isinstance(camera_source, int):
         cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
@@ -419,12 +374,22 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                             continue
 
                         event_type = rule["event_type"]
-                        priority = rule["priority"]
+                        category = rule["category"]
+                        severity = rule["severity"]
+                        should_alert = rule["should_alert"]
                         message = rule["message"]
                         color = rule["color"]
 
+                        severity_label = {
+                            "critical": "CRÍTICO",
+                            "high": "ALTO",
+                            "medium": "MEDIO",
+                            "low": "BAJO",
+                            "info": "INFO",
+                        }.get(severity, severity.upper())
+
                         _log_line(
-                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | {priority}",
+                            f"OBJ [{camera_name}]: {label} ({conf:.2f}) | {severity_label}",
                             key=f"obj_{camera.id}_{label}",
                             throttle_sec=0.25,
                         )
@@ -432,7 +397,7 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                         cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
                         cv2.putText(
                             frame,
-                            f"{label}: {conf:.2f} | {priority}",
+                            f"{label}: {conf:.2f} | {severity_label}",
                             (x, max(y - 10, 20)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
@@ -440,21 +405,24 @@ def gen_frames(camera: Camera, target_fps: int = 10):
                             2,
                         )
 
-                        event_key = f"{event_type}_camera_{camera.id}_{label}"
+                        event_key = f"{event_type}_camera_{camera.id}_{label}_{severity}"
 
                         if can_save_event(event_key, seconds=20):
                             try:
                                 create_security_event(
                                     event_type=event_type,
-                                    details=f"{message} | Prioridad: {priority} | Confianza: {conf:.2f}",
+                                    details=f"{message} | Severidad: {severity_label} | Confianza: {conf:.2f}",
                                     frame=frame.copy(),
                                     user=None,
                                     camera=camera,
-                                    epp_correcto=False,
+                                    category=category,
+                                    severity=severity,
+                                    object_label=label,
+                                    should_alert=should_alert,
                                 )
 
                                 _log_line(
-                                    f"📸 Evidencia guardada [{camera_name}]: {label} ({priority})",
+                                    f"📸 Evidencia guardada [{camera_name}]: {label} ({severity_label})",
                                     key=f"evidence_{camera.id}_{event_type}_{label}",
                                     throttle_sec=2,
                                 )
@@ -516,11 +484,15 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                             if (frame_counter - last_ppe_event_frame) > 60:
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_incorrect",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     epp_correcto=False,
+                                    category="ppe",
+                                    severity="high",
+                                    object_label=",".join(sorted(negatives)),
+                                    should_alert=True,
                                 )
                                 last_ppe_event_frame = frame_counter
 
@@ -556,11 +528,15 @@ def gen_frames(camera: Camera, target_fps: int = 10):
 
                             if (frame_counter - last_ppe_event_frame) > 60:
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_missing",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     epp_correcto=False,
+                                    category="ppe",
+                                    severity="high",
+                                    object_label=",".join(missing),
+                                    should_alert=True,
                                 )
                                 last_ppe_event_frame = frame_counter
 
@@ -792,6 +768,10 @@ def get_events(request):
             "id": event.id,
             "event_type": event.event_type,
             "event_type_display": event.get_event_type_display(),
+            "category": event.category,
+            "severity": event.severity,
+            "object_label": event.object_label,
+            "should_alert": event.should_alert,
             "details": event.details,
             "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "resolved": event.resolved,
@@ -814,6 +794,10 @@ def get_security_events(request):
                 "id": event.id,
                 "event_type": event.event_type,
                 "event_type_display": event.get_event_type_display(),
+                "category": event.category,
+                "severity": event.severity,
+                "object_label": event.object_label,
+                "should_alert": event.should_alert,
                 "details": event.details,
                 "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                 "resolved": event.resolved,

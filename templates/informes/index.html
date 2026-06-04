@@ -15,6 +15,87 @@
         Registro de incidentes y validación del uso de equipo de protección personal.
       </p>
     </div>
+
+    <!-- BOTÓN PARA GENERAR REPORTES -->
+    <div class="dropdown mt-3 mt-md-0">
+      <button
+        class="btn btn-primary dropdown-toggle"
+        type="button"
+        id="dropdownReportes"
+        data-bs-toggle="dropdown"
+        aria-expanded="false">
+        Generar reporte
+      </button>
+
+      <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="dropdownReportes">
+
+        <li>
+          <h6 class="dropdown-header">Reporte semanal</h6>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'xlsx' %}">
+            Descargar Excel (.xlsx)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'pdf' %}">
+            Descargar PDF (.pdf)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'csv' %}">
+            Descargar CSV (.csv)
+          </a>
+        </li>
+
+        <li>
+          <hr class="dropdown-divider">
+        </li>
+
+        <li>
+          <h6 class="dropdown-header">Reporte mensual</h6>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'xlsx' %}">
+            Descargar Excel (.xlsx)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'pdf' %}">
+            Descargar PDF (.pdf)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'csv' %}">
+            Descargar CSV (.csv)
+          </a>
+        </li>
+
+        <li>
+          <hr class="dropdown-divider">
+        </li>
+
+        <li>
+          <h6 class="dropdown-header">Reporte anual</h6>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'anual' 'xlsx' %}">
+            Descargar Excel (.xlsx)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'anual' 'pdf' %}">
+            Descargar PDF (.pdf)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'anual' 'csv' %}">
+            Descargar CSV (.csv)
+          </a>
+        </li>
+
+      </ul>
+    </div>
   </div>
 
   <div class="row mb-4">
@@ -72,17 +153,29 @@
 
           <div class="card-body">
             <div class="mb-3">
-              <p class="mb-1"><strong>Cámara:</strong> {{ informe.camara }}</p>
-              <p class="mb-1"><strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}</p>
-              <p class="mb-2"><strong>Descripción:</strong></p>
+              <p class="mb-1">
+                <strong>Cámara:</strong> {{ informe.camara }}
+              </p>
+
+              <p class="mb-1">
+                <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
+              </p>
+
+              <p class="mb-2">
+                <strong>Descripción:</strong>
+              </p>
+
               <div class="descripcion-box">
-                {{ informe.descripcion }}
+                {{ informe.descripcion|default:"Sin descripción registrada." }}
               </div>
             </div>
 
             <div class="mini-evidencia text-center mb-3">
               {% if informe.evidencia %}
-                <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded evidencia-preview">
+                <img
+                  src="{{ informe.evidencia.url }}"
+                  alt="Evidencia"
+                  class="img-fluid rounded evidencia-preview">
               {% else %}
                 <div class="sin-evidencia">
                   Sin evidencia disponible
@@ -118,27 +211,49 @@
       <div class="modal fade" id="evidenciaModal{{ informe.id }}" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-centered">
           <div class="modal-content border-0 shadow">
+
             <div class="modal-header">
               <h5 class="modal-title fw-bold">Evidencia del incidente</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+              <button
+                type="button"
+                class="btn-close"
+                data-bs-dismiss="modal"
+                aria-label="Cerrar">
+              </button>
             </div>
 
             <div class="modal-body">
               <div class="mb-3">
-                <p class="mb-1"><strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}</p>
-                <p class="mb-1"><strong>Cámara:</strong> {{ informe.camara }}</p>
-                <p class="mb-1"><strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}</p>
-                <p class="mb-0"><strong>Descripción:</strong> {{ informe.descripcion }}</p>
+                <p class="mb-1">
+                  <strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}
+                </p>
+
+                <p class="mb-1">
+                  <strong>Cámara:</strong> {{ informe.camara }}
+                </p>
+
+                <p class="mb-1">
+                  <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
+                </p>
+
+                <p class="mb-0">
+                  <strong>Descripción:</strong> {{ informe.descripcion|default:"Sin descripción registrada." }}
+                </p>
               </div>
 
               <div class="text-center">
-                <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded shadow-sm">
+                <img
+                  src="{{ informe.evidencia.url }}"
+                  alt="Evidencia"
+                  class="img-fluid rounded shadow-sm">
               </div>
             </div>
+
           </div>
         </div>
       </div>
       {% endif %}
+
     {% empty %}
       <div class="col-12">
         <div class="card shadow-sm border-0">
@@ -152,5 +267,6 @@
       </div>
     {% endfor %}
   </div>
+
 </div>
 {% endblock content %}

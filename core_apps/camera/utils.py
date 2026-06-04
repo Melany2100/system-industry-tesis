@@ -4,6 +4,7 @@ import uuid
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.db import close_old_connections
 from django.utils import timezone
 
 from core_apps.camera.models import SecurityEvent
@@ -113,6 +114,7 @@ def create_security_event(
     epp_correcto=None
 ):
     try:
+        close_old_connections()
         image_path = None
 
         if frame is not None:

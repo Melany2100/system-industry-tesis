@@ -7,7 +7,10 @@
 {% endblock stylesheets %}
 
 {% block content %}
-<div class="security-page">
+<div
+  class="security-page"
+  data-events-url="{% url 'get_security_events' %}"
+  data-register-face-url="{% url 'register_face' %}">
 
   <!-- Encabezado -->
   <div class="security-header">
@@ -40,24 +43,26 @@
           <div>
             <h4>Vigilancia en Tiempo Real</h4>
             <span id="cameraLabel">
-  {% if selected_camera %}
-    {{ selected_camera.nombre }} · {{ selected_camera.ubicacion|default:"Sin ubicación" }}
-  {% else %}
-    No hay cámaras configuradas
-  {% endif %}
-</span>
+              {% if selected_camera %}
+                {{ selected_camera.nombre }} · {{ selected_camera.ubicacion|default:"Sin ubicación" }}
+              {% else %}
+                No hay cámaras configuradas
+              {% endif %}
+            </span>
           </div>
         </div>
 
         <div class="camera-actions">
-
           {% if cameras %}
           <select id="cameraSelector" class="camera-select">
             {% for camera in cameras %}
-              <option 
+              <option
                 value="{% url 'video_feed_camera' camera.id %}"
-                data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}">
-                {{ camera.nombre }}
+                data-status-url="{% url 'camera_status' camera.id %}"
+                data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}"
+                data-active="{{ camera.is_active|yesno:'true,false' }}"
+                {% if selected_camera and camera.id == selected_camera.id %}selected{% endif %}>
+                {{ camera.nombre }} {% if not camera.is_active %}(Inactiva){% endif %}
               </option>
             {% endfor %}
           </select>
@@ -74,18 +79,23 @@
       </div>
 
       <div class="camera-screen" id="cameraScreen">
-        {% if selected_camera %}
-          <img 
-            src="{% url 'video_feed_camera' selected_camera.id %}?fps=8" 
-            class="camera-feed" 
-            id="videoFeed" 
+        {% if selected_camera and selected_camera.is_active %}
+          <img
+            src="{% url 'video_feed_camera' selected_camera.id %}?fps=8"
+            class="camera-feed"
+            id="videoFeed"
             alt="Video en vivo">
         {% else %}
-          <div class="no-camera-box">
+          <div class="no-camera-box" id="noCameraBox">
             <i class="fas fa-video-slash"></i>
-            <span>No hay cámaras activas configuradas.</span>
+            <span>No hay cámara activa o la cámara seleccionada está inactiva.</span>
           </div>
         {% endif %}
+
+        <div class="camera-status-badge camera-status--checking" id="cameraStatusBadge">
+          <span class="camera-status-dot"></span>
+          <strong>Verificando cámara...</strong>
+        </div>
 
         <div class="live-badge">
           <span></span>
@@ -95,8 +105,6 @@
         <div class="camera-menu">
           <i class="fas fa-ellipsis-h"></i>
         </div>
-
-
       </div>
 
       <div class="camera-footer">
@@ -265,391 +273,6 @@
 {% endblock content %}
 
 {% block javascripts %}
-<script>
-  $(document).ready(function () {
-
-    const APP_CONFIG = {
-      urls: {
-        events: '{% url "get_security_events" %}',
-        registerFace: '{% url "register_face" %}',
-        videoFeed: '{% url "video_feed" %}'
-      }
-    };
-
-    $('#cameraSelector').on('change', function () {
-      const selectedOption = $(this).find(':selected');
-      const videoUrl = selectedOption.val();
-      const label = selectedOption.data('label');
-
-      $('#cameraLabel').text(label);
-
-      const finalUrl = videoUrl + '?fps=8&t=' + Date.now();
-
-      $('#videoFeed').attr('src', finalUrl);
-    });
-
-    function escapeHtml(str) {
-      return String(str)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
-    }
-
-    function updateTimestamp() {
-      const now = new Date();
-
-      const fullDateTime = now.toLocaleString('es-EC', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      });
-
-      $('#lastUpdate').text('Ultima actualización: ' + fullDateTime);
-      $('#cameraDateTime').text('Fecha y hora actual: ' + fullDateTime);
-    }
-
-    setInterval(updateTimestamp, 1000);
-    updateTimestamp();
-
-
-
-    $('#fullscreenBtn').on('click', function () {
-      const cameraScreen = document.getElementById('cameraScreen');
-
-      if (!document.fullscreenElement) {
-        cameraScreen.requestFullscreen().catch(err => {
-          console.log('No se pudo activar pantalla completa:', err);
-        });
-      } else {
-        document.exitFullscreen();
-      }
-    });
-
-    $('#snapshotBtn').on('click', function () {
-      const img = document.getElementById('videoFeed');
-
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || img.clientWidth;
-        canvas.height = img.naturalHeight || img.clientHeight;
-
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        const link = document.createElement('a');
-        link.download = 'captura-smri.png';
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      } catch (error) {
-        alert('No se pudo capturar la imagen en este momento.');
-        console.log(error);
-      }
-    });
-
-    $('#refreshEvents').on('click', loadSecurityEvents);
-
-    window.showEventImage = function (imageUrl) {
-      $('#modalEventImage').attr('src', imageUrl);
-      const modal = new bootstrap.Modal(document.getElementById('eventImageModal'));
-      modal.show();
-    };
-
-    function loadSecurityEvents() {
-      $.ajax({
-        url: APP_CONFIG.urls.events,
-        method: 'GET',
-        success: function (data) {
-          renderEvents(data);
-        },
-        error: function (xhr) {
-          console.log("❌ get_security_events error:", xhr.status, xhr.responseText);
-
-          $('#eventsContainer').html(`
-          <div class="alert alert-danger m-2">
-            Error al cargar eventos.
-          </div>
-        `);
-        }
-      });
-    }
-
-    function renderEvents(data) {
-      let html = '';
-      const events = data.events || [];
-
-      if (events.length) {
-        events.forEach(event => {
-          let tone = 'secondary';
-          let icon = 'fa-info-circle';
-          let priority = 'Normal';
-
-          switch (event.event_type) {
-            case 'face_recognized':
-              tone = 'success';
-              icon = 'fa-user-check';
-              priority = 'Baja';
-              break;
-
-            case 'face_unknown':
-              tone = 'warning';
-              icon = 'fa-user-times';
-              priority = 'Media';
-              break;
-
-            case 'dangerous_object':
-            case 'unauthorized_access':
-              tone = 'danger';
-              icon = 'fa-exclamation-triangle';
-              priority = 'Alta';
-              break;
-          }
-
-          const title = event.event_type_display || event.event_type || 'Evento';
-          const details = event.details || 'Sin detalles adicionales';
-
-          html += `
-          <div class="event-card event-card--${tone}">
-            <div class="event-main">
-              <div class="event-icon">
-                <i class="fas ${icon}"></i>
-              </div>
-
-              <div class="event-content">
-                <strong>${escapeHtml(title)}</strong>
-                <small>${escapeHtml(event.timestamp || '')}</small>
-                <p>${escapeHtml(details)}</p>
-                <small><i class="fas fa-video"></i> ${escapeHtml(event.camera || 'Sin cámara')}</small>
-              </div>
-
-              <span class="event-priority">${priority}</span>
-            </div>
-
-            ${event.image_url ? `
-              <img src="${event.image_url}"
-                   class="event-image-thumb"
-                   alt="Evidencia"
-                   onclick="showEventImage('${event.image_url}')">
-            ` : ''}
-          </div>
-        `;
-        });
-      } else {
-        html = `
-        <div class="loading-box">
-          <i class="fas fa-shield-alt fa-2x"></i>
-          <span>No hay eventos recientes</span>
-        </div>
-      `;
-      }
-
-      $('#eventsContainer').html(html);
-    }
-
-    loadSecurityEvents();
-    setInterval(loadSecurityEvents, 5000);
-
-    $('#faceImage').on('change', function () {
-      const file = this.files[0];
-
-      if (!file) return;
-
-      const reader = new FileReader();
-
-      reader.onload = function (e) {
-        $('#facePreview').html(`
-        <img src="${e.target.result}" alt="Preview">
-      `);
-      };
-
-      reader.readAsDataURL(file);
-    });
-
-    $('#registerFaceForm').on('submit', function (e) {
-  e.preventDefault();
-
-  const nombres = $('#authorizedNombres').val().trim();
-  const apellidos = $('#authorizedApellidos').val().trim();
-  const celular = $('#authorizedCelular').val().trim();
-  const correo = $('#authorizedCorreo').val().trim();
-  const cargo = $('#authorizedCargo').val().trim();
-
-  const fileInput = $('#faceImage')[0];
-
-  if (!nombres) {
-    $('#registrationResult').html(`
-      <div class="alert alert-danger">
-        Ingresa los nombres de la persona.
-      </div>
-    `);
-    return;
-  }
-
-  if (!apellidos) {
-    $('#registrationResult').html(`
-      <div class="alert alert-danger">
-        Ingresa los apellidos de la persona.
-      </div>
-    `);
-    return;
-  }
-
-  if (!correo) {
-    $('#registrationResult').html(`
-      <div class="alert alert-danger">
-        Ingresa el correo de la persona.
-      </div>
-    `);
-    return;
-  }
-
-  if (!cargo) {
-    $('#registrationResult').html(`
-      <div class="alert alert-danger">
-        Ingresa el cargo de la persona.
-      </div>
-    `);
-    return;
-  }
-
-  if (!fileInput.files.length) {
-    $('#registrationResult').html(`
-      <div class="alert alert-danger">
-        Selecciona una imagen del rostro.
-      </div>
-    `);
-    return;
-  }
-
-  const formData = new FormData();
-
-  formData.append('nombres', nombres);
-  formData.append('apellidos', apellidos);
-  formData.append('celular', celular);
-  formData.append('correo', correo);
-  formData.append('cargo', cargo);
-  formData.append('image', fileInput.files[0]);
-
-  $('#registerBtn')
-    .prop('disabled', true)
-    .html('<i class="fas fa-spinner fa-spin me-2"></i>Procesando...');
-
-  $('#registrationResult').html('');
-
-  $.ajax({
-    url: APP_CONFIG.urls.registerFace,
-    type: 'POST',
-    data: formData,
-    processData: false,
-    contentType: false,
-    success: function (data) {
-      if (data.success === true) {
-        $('#registrationResult').html(`
-          <div class="alert alert-success">
-            ${escapeHtml(data.message || 'Rostro registrado correctamente.')}
-          </div>
-        `);
-
-        $('#registerFaceForm')[0].reset();
-
-        $('#facePreview').html(`
-          <i class="fas fa-check-circle" style="color:#22c55e;"></i>
-          <span>Registro completado</span>
-        `);
-      } else {
-        $('#registrationResult').html(`
-          <div class="alert alert-danger">
-            ${escapeHtml(data.message || 'No se pudo registrar el rostro.')}
-          </div>
-        `);
-      }
-    },
-    error: function (xhr) {
-      console.log("❌ register_face error:", xhr.status, xhr.responseText);
-
-      let message = "Error en servidor.";
-
-      if (xhr.responseJSON && xhr.responseJSON.message) {
-        message = xhr.responseJSON.message;
-      } else if (xhr.responseText) {
-        try {
-          const response = JSON.parse(xhr.responseText);
-          message = response.message || response.error || message;
-        } catch (e) {
-          message = "Error en servidor.";
-        }
-      }
-
-      $('#registrationResult').html(`
-        <div class="alert alert-danger">
-          ${escapeHtml(message)}
-        </div>
-      `);
-    },
-    complete: function () {
-      $('#registerBtn')
-        .prop('disabled', false)
-        .html('<i class="fas fa-user-plus me-2"></i>Registrar rostro autorizado');
-    }
-  });
-});
-
-    let lastLogId = 0;
-
-    function appendLiveLog(items) {
-      const box = document.getElementById("liveLog");
-
-      if (!box || !items || !items.length) return;
-
-      items.forEach(it => {
-        const line = `[${it.ts}] ${it.msg}`;
-        box.innerHTML += escapeHtml(line) + "<br>";
-      });
-
-      box.scrollTop = box.scrollHeight;
-
-      const parts = box.innerHTML.split("<br>");
-
-      if (parts.length > 180) {
-        box.innerHTML = parts.slice(parts.length - 180).join("<br>");
-      }
-    }
-
-    function loadLiveLog() {
-      const box = document.getElementById("liveLog");
-
-      if (!box) return;
-
-      const url = box.dataset.url;
-
-      if (!url) return;
-
-      $.ajax({
-        url: url,
-        method: "GET",
-        data: { after: lastLogId },
-        success: function (data) {
-          const items = data.lines || [];
-
-          appendLiveLog(items);
-
-          if (typeof data.last_id === "number") {
-            lastLogId = data.last_id;
-          } else if (items.length) {
-            lastLogId = items[items.length - 1].id;
-          }
-        },
-        error: function (xhr) {
-          console.log("❌ live_status error:", xhr.status, xhr.responseText);
-        }
-      });
-    }
-
-    loadLiveLog();
-    setInterval(loadLiveLog, 800);
-
-  });
-</script>
+{{ block.super }}
+<script src="{% static 'assets/js/pages/camera.js' %}"></script>
 {% endblock javascripts %}

@@ -10,6 +10,17 @@ from django.utils import timezone
 from core_apps.camera.models import SecurityEvent
 from core_apps.informes.models import Informe
 
+DEFAULT_EVENT_SEVERITIES = {
+    "face_recognized": "BAJO",
+    "face_unknown": "MEDIO",
+    "ppe_missing": "ALTO",
+    "intrusion": "ALTO",
+    "authorized_object": "BAJO",
+    "unauthorized_object": "MEDIO",
+    "dangerous_object": "ALTO",
+    "unauthorized_access": "ALTO",
+}
+
 
 try:
     import cv2  # type: ignore
@@ -103,6 +114,26 @@ def can_save_event(event_key, seconds=20):
     return True
 
 
+def normalize_event_severity(value, event_type=None, default="MEDIO"):
+    if not value:
+        return DEFAULT_EVENT_SEVERITIES.get(event_type, default)
+
+    level = str(value).strip().upper().replace("Í", "I")
+    aliases = {
+        "BAJA": "BAJO",
+        "MEDIA": "MEDIO",
+        "ALTA": "ALTO",
+    }
+    level = aliases.get(level, level)
+
+    valid_levels = {choice[0] for choice in SecurityEvent.SEVERITY_LEVELS}
+
+    if level in valid_levels:
+        return level
+
+    return DEFAULT_EVENT_SEVERITIES.get(event_type, default)
+
+
 def create_security_event(
     event_type,
     details,
@@ -111,7 +142,8 @@ def create_security_event(
     camara=None,
     camera=None,
     authorized_person=None,
-    epp_correcto=None
+    epp_correcto=None,
+    severity=None
 ):
     try:
         close_old_connections()
@@ -129,6 +161,7 @@ def create_security_event(
 
         event = SecurityEvent.objects.create(
             event_type=event_type,
+            severity=normalize_event_severity(severity, event_type),
             details=details,
             image_path=image_path,
             related_user=user,
@@ -147,10 +180,12 @@ def create_security_event(
             epp_correcto = False
 
         Informe.objects.create(
+            security_event=event,
             camara=camera_name,
             persona_detectada=persona,
             epp_correcto=epp_correcto,
-            descripcion=f"{event.get_event_type_display()}: {details}"
+            descripcion=f"{event.get_event_type_display()}: {details}",
+            evidencia=image_path
         )
 
         return event

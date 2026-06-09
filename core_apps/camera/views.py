@@ -119,6 +119,15 @@ def _extract_alert_level(details, event_type=None):
     return DEFAULT_EVENT_LEVELS.get(event_type, "MEDIO")
 
 
+def _get_event_level(event):
+    severity = getattr(event, "severity", None)
+
+    if severity:
+        return _normalize_alert_level(severity)
+
+    return _extract_alert_level(event.details, event.event_type)
+
+
 def _event_detection_count(event, detection_counts=None):
     if not event.authorized_person_id:
         return 0
@@ -155,7 +164,7 @@ def _event_payload(
     user_authorized_person=None,
     detection_counts=None,
 ):
-    level = _extract_alert_level(event.details, event.event_type)
+    level = _get_event_level(event)
     can_manage = bool(request_user and is_admin_user(request_user))
     can_view_evidence = _can_view_event_evidence(
         request_user,
@@ -168,6 +177,7 @@ def _event_payload(
         "event_type_display": event.get_event_type_display(),
         "details": event.details,
         "timestamp": _format_local_datetime(event.timestamp),
+        "severity": level,
         "resolved": event.resolved,
         "identified_person": event.get_person_name(),
         "identified_person_id": event.authorized_person_id,
@@ -188,6 +198,7 @@ def _event_payload(
         payload["image_path"] = image_url
     else:
         payload["image_url"] = image_url
+        payload["location"] = event.camera.ubicacion if event.camera and event.camera.ubicacion else ""
         payload["camera"] = event.camera.nombre if event.camera else "Sin cámara"
         payload["user"] = event.related_user.username if getattr(event, "related_user", None) else "Sistema"
 
@@ -319,7 +330,10 @@ ALERT_LEVELS = {
 DEFAULT_EVENT_LEVELS = {
     "face_recognized": "BAJO",
     "face_unknown": "MEDIO",
+    "ppe_missing": "ALTO",
+    "intrusion": "ALTO",
     "authorized_object": "BAJO",
+    "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
     "unauthorized_access": "ALTO",
 }
@@ -735,19 +749,19 @@ OBJECT_RULES = {
         "track_duration": True,
     },
     "backpack": {
-        "event_type": "unauthorized_access",
+        "event_type": "unauthorized_object",
         "message": "Objeto no autorizado detectado: mochila",
         "priority": "MEDIO",
         "color": (0, 255, 255),
     },
     "handbag": {
-        "event_type": "unauthorized_access",
+        "event_type": "unauthorized_object",
         "message": "Objeto no autorizado detectado: bolso",
         "priority": "MEDIO",
         "color": (0, 255, 255),
     },
     "suitcase": {
-        "event_type": "unauthorized_access",
+        "event_type": "unauthorized_object",
         "message": "Objeto no autorizado detectado: maleta",
         "priority": "MEDIO",
         "color": (0, 255, 255),
@@ -1100,6 +1114,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                         camera=camera,
                                         authorized_person=person_obj,
                                         epp_correcto=True,
+                                        severity="BAJO",
                                     )
                                 except Exception as e:
                                     print(f"Error saving recognized event: {e}")
@@ -1116,11 +1131,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             if can_save_event(event_key, seconds=30):
                                 try:
                                     create_security_event(
-                                        event_type="unauthorized_access",
+                                        event_type="intrusion",
                                         details="Persona no autorizada detectada en el área monitoreada",
                                         frame=frame.copy(),
                                         camera=camera,
                                         epp_correcto=False,
+                                        severity="ALTO",
                                     )
                                 except Exception as e:
                                     print(f"Error saving unauthorized event: {e}")
@@ -1284,6 +1300,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                     user=None,
                                     camera=camera,
                                     epp_correcto=False,
+                                    severity=priority,
                                 )
 
                                 _log_line(
@@ -1407,12 +1424,13 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                             if can_save_event(event_key, seconds=25):
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_missing",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
+                                    severity="ALTO",
                                 )
 
                             cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
@@ -1482,12 +1500,13 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                             if can_save_event(event_key, seconds=25):
                                 create_security_event(
-                                    event_type="unauthorized_access",
+                                    event_type="ppe_missing",
                                     details=msg,
                                     frame=frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
+                                    severity="ALTO",
                                 )
 
                             cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
@@ -1559,12 +1578,13 @@ _CAMERA_WORKERS_LOCK = Lock()
 
 
 class CameraStreamWorker:
-    def __init__(self, camera: Camera, target_fps: int):
+    def __init__(self, camera: Camera, target_fps: int, keep_alive: bool = False):
         self.camera = camera
         self.camera_id = camera.id
         self.camera_source = camera.source
         self.camera_name = camera.nombre
         self.target_fps = max(1, min(int(target_fps), 30))
+        self.keep_alive = keep_alive
         self._frame_lock = Lock()
         self._latest_jpeg = None
         self._latest_at = 0.0
@@ -1590,12 +1610,19 @@ class CameraStreamWorker:
     def touch(self):
         self._last_client_at = time.monotonic()
 
+    def enable_keep_alive(self):
+        self.keep_alive = True
+        self.touch()
+
     def stop(self):
         self._stop_event.set()
 
     def should_stop(self) -> bool:
         if self._stop_event.is_set():
             return True
+
+        if self.keep_alive:
+            return False
 
         idle_for = time.monotonic() - self._last_client_at
         return idle_for > CAMERA_WORKER_IDLE_SECONDS
@@ -1652,7 +1679,11 @@ class CameraStreamWorker:
             self._finished.set()
 
 
-def _get_or_start_camera_worker(camera: Camera, target_fps: int) -> CameraStreamWorker:
+def _get_or_start_camera_worker(
+    camera: Camera,
+    target_fps: int,
+    keep_alive: bool = False,
+) -> CameraStreamWorker:
     with _CAMERA_WORKERS_LOCK:
         worker = _CAMERA_WORKERS.get(camera.id)
 
@@ -1660,12 +1691,48 @@ def _get_or_start_camera_worker(camera: Camera, target_fps: int) -> CameraStream
             if worker is not None:
                 worker.stop()
 
-            worker = CameraStreamWorker(camera=camera, target_fps=target_fps)
+            worker = CameraStreamWorker(
+                camera=camera,
+                target_fps=target_fps,
+                keep_alive=keep_alive,
+            )
             _CAMERA_WORKERS[camera.id] = worker
             worker.start()
+        elif keep_alive:
+            worker.enable_keep_alive()
 
         worker.touch()
         return worker
+
+
+def autostart_active_camera_workers(target_fps: int = 8):
+    started = 0
+
+    try:
+        close_old_connections()
+        cameras = Camera.objects.filter(is_active=True).order_by("id")
+
+        for camera in cameras:
+            _get_or_start_camera_worker(
+                camera=camera,
+                target_fps=target_fps,
+                keep_alive=True,
+            )
+            started += 1
+
+        _log_line(
+            f"Autoinicio de camaras activo: {started} camara(s)",
+            key="camera_autostart",
+            throttle_sec=10,
+        )
+    except Exception as e:
+        _log_line(
+            f"Error autoiniciando camaras: {e}",
+            key="camera_autostart_error",
+            throttle_sec=10,
+        )
+
+    return started
 
 
 def gen_frames(camera: Camera, target_fps: int = 10):

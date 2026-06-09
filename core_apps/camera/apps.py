@@ -16,8 +16,16 @@ class CameraConfig(AppConfig):
             return
 
         try:
-            from .views import preload_camera_models
+            from .views import autostart_active_camera_workers, preload_camera_models
 
             preload_camera_models(async_load=True)
+
+            if os.environ.get("SMRI_AUTOSTART_CAMERAS") == "1":
+                try:
+                    target_fps = int(os.environ.get("SMRI_CAMERA_AUTOSTART_FPS", "8"))
+                except ValueError:
+                    target_fps = 8
+
+                autostart_active_camera_workers(target_fps=target_fps)
         except Exception:
             pass

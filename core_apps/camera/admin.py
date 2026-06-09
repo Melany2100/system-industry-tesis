@@ -47,6 +47,7 @@ class SecurityEventAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'event_type',
+        'severity',
         'camera',
         'authorized_person',
         'timestamp',
@@ -58,6 +59,7 @@ class SecurityEventAdmin(admin.ModelAdmin):
 
     list_filter = (
         'event_type',
+        'severity',
         'resolved',
         'camera',
         'timestamp',

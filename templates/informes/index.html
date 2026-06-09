@@ -18,11 +18,7 @@
 
     <!-- BOTÓN PARA GENERAR REPORTES -->
     <div class="dropdown mt-3 mt-md-0">
-      <button
-        class="btn btn-primary dropdown-toggle"
-        type="button"
-        id="dropdownReportes"
-        data-bs-toggle="dropdown"
+      <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownReportes" data-bs-toggle="dropdown"
         aria-expanded="false">
         Generar reporte
       </button>
@@ -103,7 +99,7 @@
       <div class="card shadow-sm border-0 h-100">
         <div class="card-body">
           <p class="text-sm text-muted mb-1">Total de informes</p>
-          <h4 class="fw-bold mb-0">{{ informes|length }}</h4>
+          <h4 class="fw-bold mb-0">{{ total_count }}</h4>
         </div>
       </div>
     </div>
@@ -129,30 +125,182 @@
     </div>
   </div>
 
+  <div class="row mb-4">
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por tipo</p>
+              <h5 class="fw-bold mb-0">Clasificación</h5>
+            </div>
+            <i class="fas fa-layer-group"></i>
+          </div>
+
+          <div class="summary-list">
+            {% for item in event_type_counts %}
+            <div class="summary-list-item">
+              <div class="summary-list-item__top">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.total }}</strong>
+              </div>
+              <div class="summary-bar">
+                <span style="width: {{ item.percent }}%;"></span>
+              </div>
+            </div>
+            {% empty %}
+            <p class="summary-empty mb-0">No hay eventos registrados.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por fecha</p>
+              <h5 class="fw-bold mb-0">Fechas registradas</h5>
+            </div>
+            <i class="fas fa-calendar-alt"></i>
+          </div>
+
+          <div class="summary-list">
+            {% for item in event_date_counts %}
+            <div class="summary-list-item">
+              <div class="summary-list-item__top">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.total }}</strong>
+              </div>
+              <div class="summary-bar">
+                <span style="width: {{ item.percent }}%;"></span>
+              </div>
+            </div>
+            {% empty %}
+            <p class="summary-empty mb-0">No hay eventos registrados.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por riesgo</p>
+              <h5 class="fw-bold mb-0">Nivel de alerta</h5>
+            </div>
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+
+          <div class="risk-summary-list">
+            {% for item in risk_level_counts %}
+            <div class="risk-summary-item">
+              <span class="risk-pill risk-pill--{{ item.key }}">{{ item.label }}</span>
+              <strong>{{ item.total }}</strong>
+              <small>{{ item.percent }}%</small>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row">
     {% for informe in informes %}
-      <div class="col-lg-6 col-xl-4 mb-4">
-        <div class="card shadow-sm border-0 h-100 informe-card">
+    <div class="col-lg-6 col-xl-4 mb-4">
+      <div class="card shadow-sm border-0 h-100 informe-card">
 
-          <div class="card-header bg-white border-0 pb-0">
-            <div class="d-flex justify-content-between align-items-start">
-              <div>
-                <h5 class="mb-1 fw-bold">Incidente registrado</h5>
-                <p class="text-sm text-muted mb-0">
-                  {{ informe.fecha|date:"d/m/Y" }} - {{ informe.fecha|time:"H:i:s" }}
-                </p>
-              </div>
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <h5 class="mb-1 fw-bold">Incidente registrado</h5>
+              <p class="text-sm text-muted mb-0">
+                {{ informe.fecha|date:"d/m/Y" }} - {{ informe.fecha|time:"H:i:s" }}
+              </p>
+            </div>
 
-              {% if informe.epp_correcto %}
-                <span class="badge bg-success">EPP correcto</span>
-              {% else %}
-                <span class="badge bg-danger">Alerta</span>
-              {% endif %}
+            {% if informe.epp_correcto %}
+            <span class="badge bg-success">EPP correcto</span>
+            {% else %}
+            <span class="badge bg-danger">Alerta</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div class="mb-3">
+            <p class="mb-1">
+              <strong>Cámara:</strong> {{ informe.camara }}
+            </p>
+
+            <p class="mb-1">
+              <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
+            </p>
+
+            <p class="mb-2">
+              <strong>Descripción:</strong>
+            </p>
+
+            <div class="descripcion-box">
+              {{ informe.descripcion|default:"Sin descripción registrada." }}
             </div>
           </div>
 
-          <div class="card-body">
+          <div class="mini-evidencia text-center mb-3">
+            {% if informe.evidencia %}
+            <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded evidencia-preview">
+            {% else %}
+            <div class="sin-evidencia">
+              Sin evidencia disponible
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="card-footer bg-white border-0 d-flex justify-content-between align-items-center">
+          {% if not informe.epp_correcto %}
+          <span class="text-danger fw-semibold">Requiere revisión</span>
+          {% else %}
+          <span class="text-success fw-semibold">Cumple normativa</span>
+          {% endif %}
+
+          {% if informe.evidencia %}
+          <button class="btn btn-sm btn-primary" data-bs-toggle="modal"
+            data-bs-target="#evidenciaModal{{ informe.id }}">
+            Ver evidencia
+          </button>
+          {% else %}
+          <button class="btn btn-sm btn-secondary" disabled>
+            Sin imagen
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if informe.evidencia %}
+    <div class="modal fade" id="evidenciaModal{{ informe.id }}" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+
+          <div class="modal-header">
+            <h5 class="modal-title fw-bold">Evidencia del incidente</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar">
+            </button>
+          </div>
+
+          <div class="modal-body">
             <div class="mb-3">
+              <p class="mb-1">
+                <strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}
+              </p>
+
               <p class="mb-1">
                 <strong>Cámara:</strong> {{ informe.camara }}
               </p>
@@ -161,112 +309,81 @@
                 <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
               </p>
 
-              <p class="mb-2">
-                <strong>Descripción:</strong>
+              <p class="mb-0">
+                <strong>Descripción:</strong> {{ informe.descripcion|default:"Sin descripción registrada." }}
               </p>
-
-              <div class="descripcion-box">
-                {{ informe.descripcion|default:"Sin descripción registrada." }}
-              </div>
             </div>
 
-            <div class="mini-evidencia text-center mb-3">
-              {% if informe.evidencia %}
-                <img
-                  src="{{ informe.evidencia.url }}"
-                  alt="Evidencia"
-                  class="img-fluid rounded evidencia-preview">
-              {% else %}
-                <div class="sin-evidencia">
-                  Sin evidencia disponible
-                </div>
-              {% endif %}
+            <div class="text-center">
+              <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded shadow-sm">
             </div>
           </div>
 
-          <div class="card-footer bg-white border-0 d-flex justify-content-between align-items-center">
-            {% if not informe.epp_correcto %}
-              <span class="text-danger fw-semibold">Requiere revisión</span>
-            {% else %}
-              <span class="text-success fw-semibold">Cumple normativa</span>
-            {% endif %}
-
-            {% if informe.evidencia %}
-              <button
-                class="btn btn-sm btn-primary"
-                data-bs-toggle="modal"
-                data-bs-target="#evidenciaModal{{ informe.id }}">
-                Ver evidencia
-              </button>
-            {% else %}
-              <button class="btn btn-sm btn-secondary" disabled>
-                Sin imagen
-              </button>
-            {% endif %}
-          </div>
         </div>
       </div>
-
-      {% if informe.evidencia %}
-      <div class="modal fade" id="evidenciaModal{{ informe.id }}" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-          <div class="modal-content border-0 shadow">
-
-            <div class="modal-header">
-              <h5 class="modal-title fw-bold">Evidencia del incidente</h5>
-              <button
-                type="button"
-                class="btn-close"
-                data-bs-dismiss="modal"
-                aria-label="Cerrar">
-              </button>
-            </div>
-
-            <div class="modal-body">
-              <div class="mb-3">
-                <p class="mb-1">
-                  <strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}
-                </p>
-
-                <p class="mb-1">
-                  <strong>Cámara:</strong> {{ informe.camara }}
-                </p>
-
-                <p class="mb-1">
-                  <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
-                </p>
-
-                <p class="mb-0">
-                  <strong>Descripción:</strong> {{ informe.descripcion|default:"Sin descripción registrada." }}
-                </p>
-              </div>
-
-              <div class="text-center">
-                <img
-                  src="{{ informe.evidencia.url }}"
-                  alt="Evidencia"
-                  class="img-fluid rounded shadow-sm">
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </div>
-      {% endif %}
+    </div>
+    {% endif %}
 
     {% empty %}
-      <div class="col-12">
-        <div class="card shadow-sm border-0">
-          <div class="card-body text-center py-5">
-            <h5 class="fw-bold mb-2">No hay informes registrados</h5>
-            <p class="text-muted mb-0">
-              Cuando el sistema detecte eventos, aparecerán aquí.
-            </p>
-          </div>
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-body text-center py-5">
+          <h5 class="fw-bold mb-2">No hay informes registrados</h5>
+          <p class="text-muted mb-0">
+            Cuando el sistema detecte eventos, aparecerán aquí.
+          </p>
         </div>
       </div>
+    </div>
     {% endfor %}
   </div>
+
+  {% if page_obj.has_other_pages %}
+  <nav aria-label="Paginación de informes" class="informes-pagination mt-4">
+    <ul class="pagination justify-content-center flex-wrap">
+
+      {% if page_obj.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Anterior</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled">
+        <span class="page-link">Anterior</span>
+      </li>
+      {% endif %}
+
+      {% for page_number in page_range %}
+      {% if page_number == page_obj.paginator.ELLIPSIS %}
+      <li class="page-item disabled">
+        <span class="page-link">{{ page_number }}</span>
+      </li>
+      {% elif page_number == page_obj.number %}
+      <li class="page-item active" aria-current="page">
+        <span class="page-link">{{ page_number }}</span>
+      </li>
+      {% else %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_number }}">{{ page_number }}</a>
+      </li>
+      {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Siguiente</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled">
+        <span class="page-link">Siguiente</span>
+      </li>
+      {% endif %}
+
+    </ul>
+    <p class="text-center text-muted text-sm mb-0">
+      Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+    </p>
+  </nav>
+  {% endif %}
 
 </div>
 {% endblock content %}

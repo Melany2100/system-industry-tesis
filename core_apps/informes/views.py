@@ -1,4 +1,6 @@
 import csv
+import re
+import unicodedata
 from datetime import timedelta
 from io import BytesIO
 
@@ -6,6 +8,9 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseForbidden, HttpResponseBadRequest
 from django.utils import timezone
+from django.core.paginator import Paginator
+from django.db.models import Count
+from django.db.models.functions import TruncDate
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -16,7 +21,141 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 from .models import Informe
+from core_apps.camera.models import SecurityEvent
 from core_apps.common.permissions import is_admin_user
+
+
+RISK_LEVELS = ("BAJO", "MEDIO", "ALTO", "CRITICO")
+DEFAULT_EVENT_LEVELS = {
+    "face_recognized": "BAJO",
+    "face_unknown": "MEDIO",
+    "ppe_missing": "ALTO",
+    "intrusion": "ALTO",
+    "authorized_object": "BAJO",
+    "unauthorized_object": "MEDIO",
+    "dangerous_object": "ALTO",
+    "unauthorized_access": "ALTO",
+}
+RISK_LEVEL_PATTERN = re.compile(
+    r"(?:nivel|prioridad)\s*:?\s*(BAJO|BAJA|MEDIO|MEDIA|ALTO|ALTA|CRITICO)",
+    re.IGNORECASE,
+)
+
+
+def _strip_accents(value):
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", str(value))
+        if not unicodedata.combining(char)
+    )
+
+
+def _normalize_risk_level(value, default="MEDIO"):
+    if not value:
+        return default
+
+    level = _strip_accents(value).strip().upper()
+
+    aliases = {
+        "BAJA": "BAJO",
+        "MEDIA": "MEDIO",
+        "ALTA": "ALTO",
+    }
+    level = aliases.get(level, level)
+
+    if level in RISK_LEVELS:
+        return level
+
+    return default
+
+
+def _extract_risk_level(details, event_type=None):
+    if hasattr(details, "severity") and details.severity:
+        return _normalize_risk_level(details.severity)
+
+    normalized_details = _strip_accents(details or "")
+    match = RISK_LEVEL_PATTERN.search(normalized_details)
+
+    if match:
+        return _normalize_risk_level(match.group(1))
+
+    return DEFAULT_EVENT_LEVELS.get(event_type, "MEDIO")
+
+
+def _add_relative_percentages(items):
+    max_total = max((item["total"] for item in items), default=0)
+
+    for item in items:
+        item["percent"] = round((item["total"] / max_total) * 100) if max_total else 0
+
+    return items
+
+
+def _get_event_type_counts(events_qs):
+    event_type_display = dict(SecurityEvent.EVENT_TYPES)
+    items = [
+        {
+            "key": item["event_type"],
+            "label": event_type_display.get(item["event_type"], item["event_type"]),
+            "total": item["total"],
+        }
+        for item in (
+            events_qs
+            .values("event_type")
+            .annotate(total=Count("id"))
+            .order_by("-total", "event_type")
+        )
+    ]
+
+    return _add_relative_percentages(items)
+
+
+def _get_event_date_counts(events_qs):
+    items = [
+        {
+            "label": item["day"].strftime("%d/%m/%Y") if item["day"] else "Sin fecha",
+            "total": item["total"],
+        }
+        for item in (
+            events_qs
+            .annotate(day=TruncDate("timestamp", tzinfo=timezone.get_current_timezone()))
+            .values("day")
+            .annotate(total=Count("id"))
+            .order_by("-day")
+        )
+    ]
+
+    return _add_relative_percentages(items)
+
+
+def _get_risk_level_counts(events_qs):
+    counters = {level: 0 for level in RISK_LEVELS}
+
+    for event in events_qs.values("event_type", "details", "severity").iterator():
+        level = (
+            _normalize_risk_level(event["severity"])
+            if event.get("severity")
+            else _extract_risk_level(event["details"], event["event_type"])
+        )
+        counters[level] = counters.get(level, 0) + 1
+
+    total_events = sum(counters.values())
+    labels = {
+        "BAJO": "Bajo",
+        "MEDIO": "Medio",
+        "ALTO": "Alto",
+        "CRITICO": "Crítico",
+    }
+
+    return [
+        {
+            "key": level.lower(),
+            "label": labels[level],
+            "total": counters[level],
+            "percent": round((counters[level] / total_events) * 100) if total_events else 0,
+        }
+        for level in RISK_LEVELS
+    ]
 
 
 @login_required(login_url="/login/")
@@ -24,12 +163,33 @@ def lista_informes(request):
     if not is_admin_user(request.user):
         return HttpResponseForbidden("Solo un administrador puede ver informes.")
 
-    informes = Informe.objects.order_by('-fecha')
-    critical_count = informes.filter(epp_correcto=False).count()
+    informes_qs = Informe.objects.select_related('security_event').order_by('-fecha')
+    events_qs = SecurityEvent.objects.all()
+
+    total_count = informes_qs.count()
+    critical_count = informes_qs.filter(epp_correcto=False).count()
+    event_type_counts = _get_event_type_counts(events_qs)
+    event_date_counts = _get_event_date_counts(events_qs)
+    risk_level_counts = _get_risk_level_counts(events_qs)
+
+    paginator = Paginator(informes_qs, 9)
+    page_number = request.GET.get("page")
+    page_obj = paginator.get_page(page_number)
+    page_range = paginator.get_elided_page_range(
+        number=page_obj.number,
+        on_each_side=1,
+        on_ends=1,
+    )
 
     return render(request, 'informes/index.html', {
-        'informes': informes,
+        'informes': page_obj,
+        'page_obj': page_obj,
+        'page_range': page_range,
+        'total_count': total_count,
         'critical_count': critical_count,
+        'event_type_counts': event_type_counts,
+        'event_date_counts': event_date_counts,
+        'risk_level_counts': risk_level_counts,
         'segment': 'lista_informes',
     })
 

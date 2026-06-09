@@ -52,12 +52,22 @@ class SecurityEvent(models.Model):
     EVENT_TYPES = (
         ('face_recognized', 'Rostro reconocido'),
         ('face_unknown', 'Rostro desconocido'),
+        ('ppe_missing', 'Falta de EPP'),
+        ('intrusion', 'Intrusión'),
         ('authorized_object', 'Objeto autorizado'),
+        ('unauthorized_object', 'Objeto no autorizado'),
         ('dangerous_object', 'Objeto peligroso detectado'),
         ('unauthorized_access', 'Acceso no autorizado'),
     )
+    SEVERITY_LEVELS = (
+        ('BAJO', 'Bajo'),
+        ('MEDIO', 'Medio'),
+        ('ALTO', 'Alto'),
+        ('CRITICO', 'Crítico'),
+    )
 
     event_type = models.CharField(max_length=50, choices=EVENT_TYPES)
+    severity = models.CharField(max_length=10, choices=SEVERITY_LEVELS, default='MEDIO')
     details = models.TextField()
     image_path = models.CharField(max_length=500, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)

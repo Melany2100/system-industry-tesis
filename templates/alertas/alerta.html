@@ -86,7 +86,10 @@
             <option value="">Todos</option>
             <option value="face_recognized">Rostro reconocido</option>
             <option value="face_unknown">Rostro desconocido</option>
+            <option value="ppe_missing">Falta de EPP</option>
+            <option value="intrusion">Intrusion</option>
             <option value="authorized_object">Objeto autorizado</option>
+            <option value="unauthorized_object">Objeto no autorizado</option>
             <option value="dangerous_object">Objeto peligroso</option>
             <option value="unauthorized_access">Acceso no autorizado</option>
           </select>
@@ -244,10 +247,25 @@ document.addEventListener("DOMContentLoaded", function () {
         text: "MEDIO",
         icon: "fa-user-xmark"
       },
+      ppe_missing: {
+        className: "danger",
+        text: "ALTO",
+        icon: "fa-helmet-safety"
+      },
+      intrusion: {
+        className: "danger",
+        text: "ALTO",
+        icon: "fa-door-open"
+      },
       authorized_object: {
         className: "success",
         text: "BAJO",
         icon: "fa-circle-check"
+      },
+      unauthorized_object: {
+        className: "warning",
+        text: "MEDIO",
+        icon: "fa-ban"
       },
       dangerous_object: {
         className: "danger",
@@ -279,9 +297,21 @@ document.addEventListener("DOMContentLoaded", function () {
         icon: "fa-user-xmark",
         label: "Rostro desconocido"
       },
+      ppe_missing: {
+        icon: "fa-helmet-safety",
+        label: "Falta de EPP"
+      },
+      intrusion: {
+        icon: "fa-door-open",
+        label: "Intrusion"
+      },
       authorized_object: {
         icon: "fa-circle-check",
         label: "Objeto autorizado"
+      },
+      unauthorized_object: {
+        icon: "fa-ban",
+        label: "Objeto no autorizado"
       },
       dangerous_object: {
         icon: "fa-triangle-exclamation",
@@ -761,6 +791,16 @@ document.addEventListener("DOMContentLoaded", function () {
       </div>
 
       <div class="info-line">
+        <span>Camara</span>
+        <strong>${escapeHtml(alert.camera || "Sin camara")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Ubicacion</span>
+        <strong>${escapeHtml(alert.location || "Por definir")}</strong>
+      </div>
+
+      <div class="info-line">
         <span>Usuario</span>
         <strong>${escapeHtml(alert.user || "Sistema")}</strong>
       </div>
@@ -790,6 +830,12 @@ document.addEventListener("DOMContentLoaded", function () {
         <strong>${escapeHtml(alert.details || "No hay detalles adicionales.")}</strong>
       </div>
     `;
+
+    const locationBox = document.querySelector(".alert-location-box span");
+
+    if (locationBox) {
+      locationBox.innerText = alert.camera || "Sin camara";
+    }
 
     const mediaContent = document.getElementById("alertMediaContent");
 

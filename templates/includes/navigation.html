@@ -7,12 +7,201 @@
   </div>
 
   <div class="custom-topbar__right">
-    <button class="topbar-icon-btn" type="button" title="Notificaciones">
-      <i class="bi bi-bell"></i>
-    </button>
+    <div class="topbar-notifications" id="topbarNotifications">
+      <button
+        class="topbar-icon-btn topbar-notifications__button"
+        id="notificationsToggle"
+        type="button"
+        title="Notificaciones"
+        aria-label="Notificaciones"
+        aria-expanded="false"
+      >
+        <i class="bi bi-bell"></i>
+        <span class="topbar-notifications__badge" id="notificationsBadge" hidden>0</span>
+      </button>
 
-    <button class="topbar-icon-btn" type="button" title="Configuración">
+      <div class="topbar-notifications__panel" id="notificationsPanel" hidden>
+        <div class="topbar-notifications__header">
+          <div>
+            <strong>Notificaciones</strong>
+            <small>Alertas recientes del sistema</small>
+          </div>
+          <a href="{% url 'alerta' %}">Ver todas</a>
+        </div>
+
+        <div class="topbar-notifications__list" id="notificationsList">
+          <div class="topbar-notifications__empty">
+            <i class="bi bi-check-circle"></i>
+            <span>Sin alertas nuevas.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button class="topbar-icon-btn" type="button" title="Configuracion">
       <i class="bi bi-gear"></i>
     </button>
   </div>
 </nav>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const root = document.getElementById("topbarNotifications");
+  const toggle = document.getElementById("notificationsToggle");
+  const panel = document.getElementById("notificationsPanel");
+  const badge = document.getElementById("notificationsBadge");
+  const list = document.getElementById("notificationsList");
+
+  if (!root || !toggle || !panel || !badge || !list) return;
+
+  const storageKey = "smri_last_seen_alert_id";
+  let alerts = [];
+  let isFirstLoad = true;
+
+  const typeMeta = {
+    face_recognized: { icon: "bi-person-check", label: "Rostro autorizado" },
+    face_unknown: { icon: "bi-person-x", label: "Rostro desconocido" },
+    ppe_missing: { icon: "bi-cone-striped", label: "Falta de EPP" },
+    intrusion: { icon: "bi-door-open", label: "Intrusion" },
+    authorized_object: { icon: "bi-check-circle", label: "Objeto autorizado" },
+    unauthorized_object: { icon: "bi-slash-circle", label: "Objeto no autorizado" },
+    dangerous_object: { icon: "bi-exclamation-triangle", label: "Objeto peligroso" },
+    unauthorized_access: { icon: "bi-shield-exclamation", label: "Acceso no autorizado" },
+    default: { icon: "bi-bell", label: "Evento" }
+  };
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function getLastSeenId() {
+    return Number(localStorage.getItem(storageKey) || 0);
+  }
+
+  function setLastSeenId(value) {
+    localStorage.setItem(storageKey, String(value || 0));
+  }
+
+  function getMaxAlertId(items) {
+    return items.reduce((maxId, item) => Math.max(maxId, Number(item.id || 0)), 0);
+  }
+
+  function getUnreadCount(items) {
+    const lastSeenId = getLastSeenId();
+    return items.filter(item => !item.resolved && Number(item.id || 0) > lastSeenId).length;
+  }
+
+  function updateBadge(count) {
+    if (count <= 0) {
+      badge.hidden = true;
+      badge.textContent = "0";
+      toggle.classList.remove("has-alerts");
+      return;
+    }
+
+    badge.hidden = false;
+    badge.textContent = count > 9 ? "9+" : String(count);
+    toggle.classList.add("has-alerts");
+  }
+
+  function renderNotifications() {
+    const recent = alerts.filter(item => !item.resolved).slice(0, 6);
+
+    if (recent.length === 0) {
+      list.innerHTML = `
+        <div class="topbar-notifications__empty">
+          <i class="bi bi-check-circle"></i>
+          <span>Sin alertas nuevas.</span>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = recent.map(item => {
+      const meta = typeMeta[item.event_type] || typeMeta.default;
+      const tone = item.priority_class || "warning";
+      const label = item.event_type_display || meta.label;
+
+      return `
+        <a class="topbar-notification topbar-notification--${escapeHtml(tone)}" href="{% url 'alerta' %}">
+          <span class="topbar-notification__icon">
+            <i class="bi ${meta.icon}"></i>
+          </span>
+          <span class="topbar-notification__body">
+            <strong>${escapeHtml(label)}</strong>
+            <small>${escapeHtml(item.camera || "Sin camara")} - ${escapeHtml(item.priority_label || item.priority || "MEDIO")}</small>
+            <em>${escapeHtml(item.timestamp || "")}</em>
+          </span>
+        </a>
+      `;
+    }).join("");
+  }
+
+  function markCurrentAlertsAsSeen() {
+    const maxId = getMaxAlertId(alerts);
+    if (maxId > getLastSeenId()) {
+      setLastSeenId(maxId);
+    }
+    updateBadge(0);
+  }
+
+  function fetchNotifications() {
+    fetch('{% url "get_security_events" %}')
+      .then(response => {
+        if (!response.ok) throw new Error("No se pudieron cargar las notificaciones.");
+        return response.json();
+      })
+      .then(data => {
+        const nextAlerts = data.events || [];
+
+        if (isFirstLoad && getLastSeenId() === 0) {
+          setLastSeenId(getMaxAlertId(nextAlerts));
+        }
+
+        const previousIds = new Set(alerts.map(item => item.id));
+        const hasNewAlert = nextAlerts.some(item =>
+          !isFirstLoad &&
+          !previousIds.has(item.id) &&
+          !item.resolved
+        );
+
+        alerts = nextAlerts;
+        renderNotifications();
+        updateBadge(getUnreadCount(alerts));
+
+        if (hasNewAlert) {
+          toggle.classList.add("has-new-alert");
+          setTimeout(() => toggle.classList.remove("has-new-alert"), 900);
+        }
+
+        isFirstLoad = false;
+      })
+      .catch(error => {
+        console.warn("Error al cargar notificaciones:", error);
+      });
+  }
+
+  toggle.addEventListener("click", function () {
+    const shouldOpen = panel.hidden;
+
+    panel.hidden = !shouldOpen;
+    toggle.setAttribute("aria-expanded", String(shouldOpen));
+
+    if (shouldOpen) {
+      markCurrentAlertsAsSeen();
+    }
+  });
+
+  document.addEventListener("click", function (event) {
+    if (root.contains(event.target)) return;
+    panel.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  });
+
+  fetchNotifications();
+  setInterval(fetchNotifications, 5000);
+});
+</script>

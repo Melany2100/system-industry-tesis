@@ -1,3 +1,4 @@
+from core_apps import camera
 from core_apps.camera.utils import cv2
 
 import os
@@ -934,9 +935,21 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     camera_name = camera.nombre
 
     if isinstance(camera_source, int):
+        # Cámara local tipo webcam
         cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     else:
-        cap = cv2.VideoCapture(camera_source)
+        # Cámara IP / RTSP
+        camera_source = str(camera_source).strip()
+
+        # Opciones para reducir retraso en RTSP con OpenCV + FFMPEG
+        if camera_source.lower().startswith("rtsp://"):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|max_delay;500000"
+            )
+
+        cap = cv2.VideoCapture(camera_source, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
         _log_line(f"❌ No se pudo abrir la cámara: {camera_name}", key=f"cam_fail_{camera.id}", throttle_sec=10)
@@ -991,6 +1004,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                 time.sleep(next_frame_at - now)
 
             next_frame_at = max(next_frame_at + frame_interval, time.monotonic() + 0.001)
+
+            # Para cámaras RTSP, intentamos descartar frames viejos acumulados
+            if not isinstance(camera_source, int):
+                for _ in range(2):
+                    cap.grab()
 
             ok, frame = cap.read()
 

@@ -195,6 +195,13 @@ def _event_payload(
         "can_view_evidence": can_view_evidence,
         "can_manage": can_manage,
         "can_resolve": can_manage and not event.resolved,
+        "email_status": event.email_status,
+        "email_status_display": event.get_email_status_display(),
+        "email_recipient": event.email_recipient,
+        "email_cc": event.email_cc if can_manage else "",
+        "email_sent_at": _format_local_datetime(event.email_sent_at),
+        "email_error": event.email_error if can_manage else "",
+        "can_retry_email": can_manage and event.email_status != "SENT",
         **_alert_level_meta(level),
     }
 
@@ -2279,6 +2286,33 @@ def review_security_event(request, event_id):
             detection_counts=detection_counts,
         )
     })
+
+
+@login_required(login_url="/login/")
+@require_POST
+def retry_incident_email(request, event_id):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede reenviar correos.")
+
+    event = get_object_or_404(SecurityEvent, id=event_id)
+    event.email_status = "PENDING"
+    event.email_error = ""
+    event.save(update_fields=["email_status", "email_error"])
+
+    from core_apps.camera.services.incident_email import notify_incident_by_email
+
+    sent = notify_incident_by_email(event.id)
+    event.refresh_from_db()
+
+    return JsonResponse({
+        "success": sent,
+        "message": (
+            "Correo enviado correctamente."
+            if sent
+            else event.email_error or "No se pudo enviar el correo."
+        ),
+        "event": _event_payload(event, request_user=request.user),
+    }, status=200 if sent else 400)
 
 
 @csrf_exempt

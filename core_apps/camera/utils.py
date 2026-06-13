@@ -4,10 +4,11 @@ import uuid
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from core_apps.camera.models import SecurityEvent
+from core_apps.camera.services.incident_email import notify_incident_by_email
 from core_apps.informes.models import Informe
 
 DEFAULT_EVENT_SEVERITIES = {
@@ -159,34 +160,36 @@ def create_security_event(
         else:
             camera_name = "Cámara no especificada"
 
-        event = SecurityEvent.objects.create(
-            event_type=event_type,
-            severity=normalize_event_severity(severity, event_type),
-            details=details,
-            image_path=image_path,
-            related_user=user,
-            authorized_person=authorized_person,
-            camera=camera
-        )
+        with transaction.atomic():
+            event = SecurityEvent.objects.create(
+                event_type=event_type,
+                severity=normalize_event_severity(severity, event_type),
+                details=details,
+                image_path=image_path,
+                related_user=user,
+                authorized_person=authorized_person,
+                camera=camera
+            )
 
-        if authorized_person is not None:
-            persona = authorized_person.get_full_name()
-        elif user:
-            persona = user.get_full_name().strip() or user.username
-        else:
-            persona = "Desconocido"
+            if authorized_person is not None:
+                persona = authorized_person.get_full_name()
+            elif user:
+                persona = user.get_full_name().strip() or user.username
+            else:
+                persona = "Desconocido"
 
-        if epp_correcto is None:
-            epp_correcto = False
+            if epp_correcto is None:
+                epp_correcto = False
 
-        Informe.objects.create(
-            security_event=event,
-            camara=camera_name,
-            persona_detectada=persona,
-            epp_correcto=epp_correcto,
-            descripcion=f"{event.get_event_type_display()}: {details}",
-            evidencia=image_path
-        )
+            Informe.objects.create(
+                security_event=event,
+                camara=camera_name,
+                persona_detectada=persona,
+                epp_correcto=epp_correcto,
+                descripcion=f"{event.get_event_type_display()}: {details}",
+                evidencia=image_path
+            )
+            transaction.on_commit(lambda: notify_incident_by_email(event.pk))
 
         return event
 

@@ -465,6 +465,7 @@
   color: #b45309;
 }
 
+.status-danger,
 .priority-danger {
   background: rgba(239, 68, 68, .12);
   color: #b91c1c;
@@ -692,6 +693,11 @@
 .modal-btn-primary {
   background: var(--alerts-primary);
   color: #fff;
+}
+
+.modal-btn-email {
+  background: #e0f2fe;
+  color: #0369a1;
 }
 
 .modal-btn-primary:disabled {

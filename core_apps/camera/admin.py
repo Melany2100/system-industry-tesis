@@ -52,6 +52,8 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'authorized_person',
         'timestamp',
         'resolved',
+        'email_status',
+        'email_sent_at',
         'related_user',
         'reviewed_by',
         'managed_by',
@@ -61,6 +63,7 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'event_type',
         'severity',
         'resolved',
+        'email_status',
         'camera',
         'timestamp',
         'reviewed_at',
@@ -74,4 +77,14 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'authorized_person__correo',
         'reviewed_by__username',
         'managed_by__username',
+        'email_recipient',
+        'email_cc',
+    )
+
+    readonly_fields = (
+        'email_status',
+        'email_recipient',
+        'email_cc',
+        'email_sent_at',
+        'email_error',
     )

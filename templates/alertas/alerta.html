@@ -127,13 +127,14 @@
               <th>Fecha/Hora</th>
               <th>Prioridad</th>
               <th>Estado</th>
+              <th>Correo</th>
               <th>Acciones</th>
             </tr>
           </thead>
 
           <tbody id="alertsContainer">
             <tr>
-              <td colspan="10">
+              <td colspan="11">
                 <div class="alerts-loading">
                   <div class="spinner-border text-primary" role="status">
                     <span class="visually-hidden">Cargando...</span>
@@ -210,6 +211,11 @@
           Cerrar
         </button>
 
+        <button type="button" class="modal-btn modal-btn-email" id="retryEmailBtn" hidden>
+          <i class="fas fa-envelope"></i>
+          Reintentar correo
+        </button>
+
         <button type="button" class="modal-btn modal-btn-primary" id="resolveAlertBtn">
           Marcar como Resuelta
         </button>
@@ -234,6 +240,7 @@ document.addEventListener("DOMContentLoaded", function () {
     urls: {
       alerts: '{% url "get_security_events" %}',
       reviewTemplate: '{% url "review_security_event" event_id=0 %}',
+      retryEmailTemplate: '{% url "retry_incident_email" event_id=0 %}',
       resolveTemplate: '{% url "mark_event_resolved" event_id=0 %}'
     },
     priorities: {
@@ -563,7 +570,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         document.getElementById("alertsContainer").innerHTML = `
           <tr>
-            <td colspan="10">
+            <td colspan="11">
               <div class="alerts-empty alerts-empty-danger">
                 <i class="fas fa-circle-exclamation"></i>
                 <span>Error al cargar alertas.</span>
@@ -583,7 +590,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (events.length === 0) {
       container.innerHTML = `
         <tr>
-            <td colspan="10">
+            <td colspan="11">
             <div class="alerts-empty">
               <i class="fas fa-check-circle"></i>
               <span>No hay alertas para mostrar.</span>
@@ -601,6 +608,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const type = getType(event.event_type);
       const statusText = event.resolved ? "Resuelta" : "Pendiente";
       const statusClass = event.resolved ? "completed" : "pending";
+      const emailStatuses = {
+        SENT: { text: "Enviado", className: "completed", icon: "fa-envelope-circle-check" },
+        FAILED: { text: "Fallido", className: "danger", icon: "fa-envelope-circle-xmark" },
+        SKIPPED: { text: "No aplica", className: "pending", icon: "fa-envelope" },
+        PENDING: { text: "Pendiente", className: "pending", icon: "fa-clock" }
+      };
+      const emailStatus = emailStatuses[event.email_status] || emailStatuses.PENDING;
       const canViewEvidence = Boolean(event.can_view_evidence);
       const canResolve = Boolean(event.can_resolve);
       const rowClass = canViewEvidence ? "alerts-row" : "alerts-row alerts-row--locked";
@@ -615,6 +629,12 @@ document.addEventListener("DOMContentLoaded", function () {
         ${canResolve ? `
           <button class="icon-action resolve-alert-row-btn" type="button" title="Resolver" data-id="${escapeAttr(event.id)}">
             <i class="fas fa-check"></i>
+          </button>
+        ` : ""}
+
+        ${event.can_retry_email ? `
+          <button class="icon-action retry-email-btn" type="button" title="Reintentar correo" data-id="${escapeAttr(event.id)}">
+            <i class="fas fa-envelope"></i>
           </button>
         ` : ""}
       `.trim();
@@ -673,6 +693,13 @@ document.addEventListener("DOMContentLoaded", function () {
           </td>
 
           <td>
+            <span class="status-badge status-${emailStatus.className}" title="${escapeAttr(event.email_error || "")}">
+              <i class="fas ${emailStatus.icon}"></i>
+              ${emailStatus.text}
+            </span>
+          </td>
+
+          <td>
             <div class="row-actions">
               ${actions || `<span class="no-actions">Sin acciones</span>`}
             </div>
@@ -704,6 +731,37 @@ document.addEventListener("DOMContentLoaded", function () {
         resolveCurrentAlert();
       });
     });
+
+    container.querySelectorAll(".retry-email-btn").forEach(button => {
+      button.addEventListener("click", function (event) {
+        event.stopPropagation();
+        retryIncidentEmail(this.dataset.id);
+      });
+    });
+  }
+
+  function retryIncidentEmail(alertId) {
+    const url = ALERT_SYSTEM.urls.retryEmailTemplate.replace("/0/", `/${alertId}/`);
+
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-CSRFToken": "{{ csrf_token }}"
+      },
+      body: new URLSearchParams({ csrfmiddlewaretoken: "{{ csrf_token }}" })
+    })
+    .then(async response => {
+      const data = await response.json();
+
+      if (data.event) replaceAlert(data.event);
+      applyFilters();
+
+      if (!response.ok) throw new Error(data.message || "No se pudo enviar el correo.");
+      return data;
+    })
+    .then(data => window.alert(data.message))
+    .catch(error => window.alert(error.message));
   }
 
   function showAlertDetail(alertId) {
@@ -821,6 +879,28 @@ document.addEventListener("DOMContentLoaded", function () {
         <strong>${escapeHtml(alert.managed_by || "Sin gestion")}</strong>
       </div>
 
+      <div class="info-line">
+        <span>Estado del correo</span>
+        <strong>${escapeHtml(alert.email_status_display || "Pendiente")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Destinatario</span>
+        <strong>${escapeHtml(alert.email_recipient || "Sin destinatario")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Correo enviado</span>
+        <strong>${escapeHtml(alert.email_sent_at || "No enviado")}</strong>
+      </div>
+
+      ${alert.email_error ? `
+        <div class="info-line info-line-column">
+          <span>Error de correo</span>
+          <strong>${escapeHtml(alert.email_error)}</strong>
+        </div>
+      ` : ""}
+
       <div class="info-line info-line-column">
         <span>Descripción</span>
         <strong>${escapeHtml(alert.details || "No hay detalles adicionales.")}</strong>
@@ -849,6 +929,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     const resolveButton = document.getElementById("resolveAlertBtn");
+    const retryEmailButton = document.getElementById("retryEmailBtn");
+
+    if (retryEmailButton) {
+      retryEmailButton.hidden = !alert.can_retry_email;
+      retryEmailButton.disabled = false;
+      retryEmailButton.innerHTML = '<i class="fas fa-envelope"></i> Reintentar correo';
+    }
 
     if (!alert.can_manage) {
       resolveButton.style.display = "none";
@@ -987,6 +1074,26 @@ document.addEventListener("DOMContentLoaded", function () {
 
   if (resolveButton) {
     resolveButton.addEventListener("click", resolveCurrentAlert);
+  }
+
+  const retryEmailButton = document.getElementById("retryEmailBtn");
+
+  if (retryEmailButton) {
+    retryEmailButton.addEventListener("click", function () {
+      if (!ALERT_SYSTEM.currentAlertId) return;
+
+      this.disabled = true;
+      this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+
+      retryIncidentEmail(ALERT_SYSTEM.currentAlertId)
+        .finally(() => {
+          const updatedAlert = ALERT_SYSTEM.currentAlerts.find(
+            item => String(item.id) === String(ALERT_SYSTEM.currentAlertId)
+          );
+
+          if (updatedAlert) renderAlertDetail(updatedAlert);
+        });
+    });
   }
 
   loadAlerts();

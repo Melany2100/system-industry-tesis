@@ -49,6 +49,12 @@ class AuthorizedPerson(models.Model):
 
 
 class SecurityEvent(models.Model):
+    EMAIL_STATUS_CHOICES = (
+        ('PENDING', 'Pendiente'),
+        ('SENT', 'Enviado'),
+        ('FAILED', 'Fallido'),
+        ('SKIPPED', 'No aplica'),
+    )
     EVENT_TYPES = (
         ('face_recognized', 'Rostro reconocido'),
         ('face_unknown', 'Rostro desconocido'),
@@ -72,6 +78,15 @@ class SecurityEvent(models.Model):
     image_path = models.CharField(max_length=500, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     resolved = models.BooleanField(default=False)
+    email_status = models.CharField(
+        max_length=10,
+        choices=EMAIL_STATUS_CHOICES,
+        default='PENDING',
+    )
+    email_recipient = models.EmailField(blank=True, default='')
+    email_cc = models.TextField(blank=True, default='')
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_error = models.TextField(blank=True, default='')
     related_user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,

@@ -1,7 +1,7 @@
 import csv
 import re
 import unicodedata
-from datetime import timedelta
+from datetime import date, timedelta
 from io import BytesIO
 
 from django.shortcuts import render
@@ -110,22 +110,47 @@ def _get_event_type_counts(events_qs):
     return _add_relative_percentages(items)
 
 
-def _get_event_date_counts(events_qs):
-    items = [
-        {
-            "label": item["day"].strftime("%d/%m/%Y") if item["day"] else "Sin fecha",
-            "total": item["total"],
-        }
-        for item in (
-            events_qs
-            .annotate(day=TruncDate("timestamp", tzinfo=timezone.get_current_timezone()))
-            .values("day")
-            .annotate(total=Count("id"))
-            .order_by("-day")
-        )
-    ]
+def _get_event_date_counts(events_qs, start_date, end_date):
+    raw_counts = (
+        events_qs
+        .filter(timestamp__date__gte=start_date, timestamp__date__lte=end_date)
+        .annotate(day=TruncDate("timestamp", tzinfo=timezone.get_current_timezone()))
+        .values("day")
+        .annotate(total=Count("id"))
+    )
+    totals_by_day = {
+        item["day"]: item["total"]
+        for item in raw_counts
+        if item["day"]
+    }
+    items = []
+
+    for offset in range((end_date - start_date).days + 1):
+        day = end_date - timedelta(days=offset)
+        items.append({
+            "label": day.strftime("%d/%m/%Y"),
+            "total": totals_by_day.get(day, 0),
+        })
 
     return _add_relative_percentages(items)
+
+
+def _get_selected_event_week(request):
+    today = timezone.localdate()
+    selected_month = request.GET.get("event_month", "").strip()
+    selected_week_raw = request.GET.get("event_week", "").strip()
+
+    if re.fullmatch(r"\d{4}-\d{2}", selected_month) and selected_week_raw in {"1", "2", "3", "4", "5"}:
+        try:
+            year, month = (int(value) for value in selected_month.split("-"))
+            selected_week = int(selected_week_raw)
+            start_date = date(year, month, 1) + timedelta(days=(selected_week - 1) * 7)
+            end_date = start_date + timedelta(days=6)
+            return start_date, end_date, selected_month, selected_week
+        except ValueError:
+            pass
+
+    return today - timedelta(days=6), today, today.strftime("%Y-%m"), None
 
 
 def _get_risk_level_counts(events_qs):
@@ -169,8 +194,13 @@ def lista_informes(request):
     total_count = informes_qs.count()
     critical_count = informes_qs.filter(epp_correcto=False).count()
     event_type_counts = _get_event_type_counts(events_qs)
-    event_date_counts = _get_event_date_counts(events_qs)
+    event_start_date, event_end_date, selected_event_month, selected_event_week = _get_selected_event_week(request)
+    event_date_counts = _get_event_date_counts(events_qs, event_start_date, event_end_date)
     risk_level_counts = _get_risk_level_counts(events_qs)
+    date_filter_query = ""
+
+    if selected_event_week:
+        date_filter_query = f"event_month={selected_event_month}&event_week={selected_event_week}"
 
     paginator = Paginator(informes_qs, 9)
     page_number = request.GET.get("page")
@@ -189,6 +219,12 @@ def lista_informes(request):
         'critical_count': critical_count,
         'event_type_counts': event_type_counts,
         'event_date_counts': event_date_counts,
+        'event_date_range_label': (
+            f"{event_start_date.strftime('%d/%m/%Y')} - {event_end_date.strftime('%d/%m/%Y')}"
+        ),
+        'selected_event_month': selected_event_month,
+        'selected_event_week': selected_event_week,
+        'date_filter_query': date_filter_query,
         'risk_level_counts': risk_level_counts,
         'segment': 'lista_informes',
     })

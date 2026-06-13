@@ -162,9 +162,42 @@
           <div class="summary-card-header">
             <div>
               <p class="text-sm text-muted mb-1">Eventos por fecha</p>
-              <h5 class="fw-bold mb-0">Fechas registradas</h5>
+              <h5 class="fw-bold mb-0">
+                {% if selected_event_week %}Semana seleccionada{% else %}Últimos 7 días{% endif %}
+              </h5>
+              <small class="event-date-range">{{ event_date_range_label }}</small>
             </div>
-            <i class="fas fa-calendar-alt"></i>
+            <div class="event-date-filter">
+              <button
+                type="button"
+                class="event-date-filter__toggle"
+                id="eventDateFilterToggle"
+                aria-label="Filtrar eventos por semana"
+                aria-expanded="false"
+                aria-controls="eventDateFilterPanel">
+                <i class="fas fa-calendar-alt"></i>
+              </button>
+
+              <form method="get" class="event-date-filter__panel" id="eventDateFilterPanel" hidden>
+                <strong>Buscar una semana</strong>
+                <label for="eventMonth">Mes</label>
+                <input type="month" id="eventMonth" name="event_month" value="{{ selected_event_month }}" required>
+
+                <label for="eventWeek">Semana del mes</label>
+                <select id="eventWeek" name="event_week" required>
+                  <option value="1" {% if selected_event_week == 1 %}selected{% endif %}>Días 1 al 7</option>
+                  <option value="2" {% if selected_event_week == 2 %}selected{% endif %}>Días 8 al 14</option>
+                  <option value="3" {% if selected_event_week == 3 %}selected{% endif %}>Días 15 al 21</option>
+                  <option value="4" {% if selected_event_week == 4 %}selected{% endif %}>Días 22 al 28</option>
+                  <option value="5" {% if selected_event_week == 5 %}selected{% endif %}>Desde el día 29</option>
+                </select>
+
+                <div class="event-date-filter__actions">
+                  <a href="{% url 'lista_informes' %}">Últimos 7 días</a>
+                  <button type="submit">Aplicar</button>
+                </div>
+              </form>
+            </div>
           </div>
 
           <div class="summary-list">
@@ -344,7 +377,7 @@
 
       {% if page_obj.has_previous %}
       <li class="page-item">
-        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Anterior</a>
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_obj.previous_page_number }}">Anterior</a>
       </li>
       {% else %}
       <li class="page-item disabled">
@@ -363,14 +396,14 @@
       </li>
       {% else %}
       <li class="page-item">
-        <a class="page-link" href="?page={{ page_number }}">{{ page_number }}</a>
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_number }}">{{ page_number }}</a>
       </li>
       {% endif %}
       {% endfor %}
 
       {% if page_obj.has_next %}
       <li class="page-item">
-        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Siguiente</a>
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_obj.next_page_number }}">Siguiente</a>
       </li>
       {% else %}
       <li class="page-item disabled">
@@ -387,3 +420,34 @@
 
 </div>
 {% endblock content %}
+
+{% block javascripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('eventDateFilterToggle');
+    const panel = document.getElementById('eventDateFilterPanel');
+
+    if (!toggle || !panel) return;
+
+    function closePanel() {
+      panel.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    toggle.addEventListener('click', function (event) {
+      event.stopPropagation();
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+
+    panel.addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+
+    document.addEventListener('click', closePanel);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closePanel();
+    });
+  });
+</script>
+{% endblock javascripts %}

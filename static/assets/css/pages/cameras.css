@@ -418,6 +418,73 @@
   border: 1px solid var(--security-border);
 }
 
+.personnel-registration-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.personnel-registration-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.personnel-registration-content h4 {
+  margin: 0 0 .35rem;
+  color: var(--security-text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.personnel-registration-content span {
+  display: block;
+  color: var(--security-muted);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.personnel-registration-btn {
+  margin-top: 0;
+}
+
+.personnel-registration-dialog {
+  max-width: 560px;
+}
+
+.personnel-registration-modal {
+  border: none;
+  border-radius: 1.25rem;
+  overflow: hidden;
+}
+
+.personnel-registration-modal .modal-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--security-border);
+  padding: 1.25rem 1.5rem;
+}
+
+.personnel-registration-modal .modal-title {
+  color: var(--security-text);
+  font-weight: 800;
+}
+
+.personnel-registration-modal .modal-header span {
+  display: block;
+  margin-top: .25rem;
+  color: var(--security-muted);
+  font-size: .78rem;
+}
+
+.personnel-registration-modal .modal-body {
+  padding: 1.5rem;
+}
+
+.personnel-registration-modal .form-group-custom + .form-group-custom {
+  margin-top: .85rem;
+}
+
 .face-capture-preview {
   width: 100%;
   height: 170px;

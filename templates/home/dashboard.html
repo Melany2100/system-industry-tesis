@@ -55,17 +55,17 @@
 
     <a href="{% url 'alerta' %}" class="metric-card">
       <div class="metric-card__top">
-        <span>Alertas críticas</span>
+        <span>Alertas críticas hoy</span>
         <i class="bi bi-arrow-up-right"></i>
       </div>
       <strong>{{ critical_alerts }}</strong>
-      <p>Eventos peligrosos o accesos no autorizados pendientes.</p>
+      <p>Alertas de nivel alto o crítico pendientes durante el día de hoy.</p>
     </a>
 
     {% if is_admin_user %}
     <a href="{% url 'lista_informes' %}" class="metric-card">
       <div class="metric-card__top">
-        <span>Informes hoy</span>
+        <span>Informes generados hoy</span>
         <i class="bi bi-arrow-up-right"></i>
       </div>
       <strong>{{ informes_today }}</strong>
@@ -73,14 +73,14 @@
     </a>
     {% endif %}
 
-    <div class="metric-card">
+    <a href="{% url 'alerta' %}" class="metric-card">
       <div class="metric-card__top">
-        <span>Cumplimiento EPP</span>
-        <i class="bi bi-person-check"></i>
+        <span>Accesos no autorizados hoy</span>
+        <i class="bi bi-shield-exclamation"></i>
       </div>
-      <strong>{{ epp_percent }}%</strong>
-      <p>Porcentaje de registros con uso correcto del EPP.</p>
-    </div>
+      <strong>{{ unauthorized_accesses_today }}</strong>
+      <p>Intentos de acceso, intrusiones o rostros desconocidos detectados hoy.</p>
+    </a>
 
   </div>
 
@@ -384,11 +384,14 @@
         datasets: [{
           data: eventValues,
           backgroundColor: [
-            '#133C55',
-            '#386FA4',
-            '#59A5D8',
-            '#84D2F6',
-            '#91E5F6'
+            '#dc2626',
+            '#16a34a',
+            '#f59e0b',
+            '#2563eb',
+            '#7c3aed',
+            '#ea580c',
+            '#be123c',
+            '#0891b2'
           ],
           borderWidth: 0
         }]

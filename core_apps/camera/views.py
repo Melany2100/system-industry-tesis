@@ -8,10 +8,14 @@ import time
 import traceback
 from collections import deque
 from datetime import datetime, timedelta
+from io import BytesIO
 from threading import Event, Lock, Thread
 
 from django.conf import settings
-from django.db import close_old_connections
+from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
+from django.core.validators import validate_email
+from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Count, Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -21,6 +25,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .models import AuthorizedPerson, SecurityEvent, Camera
 from core_apps.camera.utils import create_security_event, can_save_event, save_authorized_face_image
@@ -671,6 +676,7 @@ def _safe_import_ultralytics():
 
 _FACE_RECOGNITION_CACHE = {"module": None, "attempted": False}
 _IMPORT_CACHE_LOCK = Lock()
+_FACE_RECOGNITION_INFERENCE_LOCK = Lock()
 
 
 def _load_face_recognition():
@@ -1048,8 +1054,13 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                     # Run recognition
                     rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-                    face_locations = face_rec.face_locations(rgb_small)
-                    face_encodings = face_rec.face_encodings(rgb_small, face_locations)
+                    with _FACE_RECOGNITION_INFERENCE_LOCK:
+                        face_locations = face_rec.face_locations(rgb_small, model="hog")
+                        face_encodings = face_rec.face_encodings(
+                            rgb_small,
+                            face_locations,
+                            num_jitters=1,
+                        )
 
                     new_detected_faces = []
                     current_faces = []
@@ -1116,26 +1127,13 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         if is_authorized:
                             current_faces.append((x1, y1, x2, y2, f"Autorizado: {name}", (0, 255, 0)))
 
-                            # Log and alert
+                            # El reconocimiento autorizado se conserva solo en el log y
+                            # en memoria para asociar correctamente los eventos de EPP.
                             _log_line(
                                 f"FACE [{camera_name}]: ✅ Autorizado: {name}",
                                 key=f"face_rec_log_{camera.id}_{person_obj.id}",
                                 throttle_sec=15.0
                             )
-                            event_key = f"face_rec_event_{camera.id}_{person_obj.id}"
-                            if can_save_event(event_key, seconds=30):
-                                try:
-                                    create_security_event(
-                                        event_type="face_recognized",
-                                        details=f"Rostro autorizado detectado: {name} (Cargo: {person_obj.cargo})",
-                                        frame=frame.copy(),
-                                        camera=camera,
-                                        authorized_person=person_obj,
-                                        epp_correcto=True,
-                                        severity="BAJO",
-                                    )
-                                except Exception as e:
-                                    print(f"Error saving recognized event: {e}")
                         else:
                             current_faces.append((x1, y1, x2, y2, "NO AUTORIZADO", (0, 0, 255)))
 
@@ -1996,6 +1994,14 @@ def register_face(request):
                 status=400
             )
 
+        try:
+            validate_email(correo)
+        except ValidationError:
+            return JsonResponse(
+                {"success": False, "message": "Ingresa un correo electrónico válido."},
+                status=400
+            )
+
         if not cargo:
             return JsonResponse(
                 {"success": False, "message": "Ingresa el cargo de la persona."},
@@ -2008,9 +2014,49 @@ def register_face(request):
                 status=400
             )
 
-        image_data = face_recognition.load_image_file(image_file)
+        max_upload_size = 10 * 1024 * 1024
 
-        face_locations = face_recognition.face_locations(image_data)
+        if image_file.size > max_upload_size:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "message": "La fotografía supera el límite de 10 MB. Selecciona una imagen más liviana."
+                },
+                status=400
+            )
+
+        try:
+            image_file.seek(0)
+
+            with Image.open(image_file) as source_image:
+                normalized_image = ImageOps.exif_transpose(source_image).convert("RGB")
+                normalized_image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+
+                normalized_buffer = BytesIO()
+                normalized_image.save(normalized_buffer, format="JPEG", quality=90, optimize=True)
+                normalized_bytes = normalized_buffer.getvalue()
+        except (UnidentifiedImageError, OSError, ValueError):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "message": "El archivo seleccionado no es una imagen válida. Usa JPG, PNG o WEBP."
+                },
+                status=400
+            )
+
+        image_data = face_recognition.load_image_file(BytesIO(normalized_bytes))
+
+        with _FACE_RECOGNITION_INFERENCE_LOCK:
+            face_locations = face_recognition.face_locations(image_data, model="hog")
+
+            if len(face_locations) == 1:
+                encodings = face_recognition.face_encodings(
+                    image_data,
+                    face_locations,
+                    num_jitters=1,
+                )
+            else:
+                encodings = []
 
         if not face_locations:
             return JsonResponse(
@@ -2030,8 +2076,6 @@ def register_face(request):
                 status=400
             )
 
-        encodings = face_recognition.face_encodings(image_data, face_locations)
-
         if not encodings:
             return JsonResponse(
                 {
@@ -2043,22 +2087,41 @@ def register_face(request):
 
         encoding_json = json.dumps(encodings[0].tolist())
 
-        image_file.seek(0)
-        face_image_path = save_authorized_face_image(image_file, correo)
+        normalized_file = ContentFile(normalized_bytes, name="authorized_face.jpg")
+        face_image_path = save_authorized_face_image(normalized_file, correo)
 
-        person, created = AuthorizedPerson.objects.update_or_create(
-            correo=correo,
-            defaults={
-                "nombres": nombres,
-                "apellidos": apellidos,
-                "celular": celular,
-                "cargo": cargo,
-                "face_encoding": encoding_json,
-                "face_image_path": face_image_path,
-                "registered_by": request.user,
-                "is_active": True,
-            }
-        )
+        if not face_image_path:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "message": "No se pudo guardar la fotografía. Revisa el almacenamiento del servidor."
+                },
+                status=500
+            )
+
+        try:
+            with transaction.atomic():
+                person, created = AuthorizedPerson.objects.update_or_create(
+                    correo=correo,
+                    defaults={
+                        "nombres": nombres,
+                        "apellidos": apellidos,
+                        "celular": celular,
+                        "cargo": cargo,
+                        "face_encoding": encoding_json,
+                        "face_image_path": face_image_path,
+                        "registered_by": request.user,
+                        "is_active": True,
+                    }
+                )
+        except IntegrityError:
+            return JsonResponse(
+                {
+                    "success": False,
+                    "message": "No se pudo registrar la persona porque el correo ya está asociado a otro registro."
+                },
+                status=409
+            )
 
         action = "registrado" if created else "actualizado"
 

@@ -197,11 +197,17 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
         critical_alerts = SecurityEvent.objects.filter(
             resolved=False,
+            timestamp__date=today,
+            severity__in=['ALTO', 'CRITICO'],
+        ).count()
+
+        unauthorized_accesses_today = SecurityEvent.objects.filter(
+            timestamp__date=today,
             event_type__in=[
-                'dangerous_object',
                 'unauthorized_access',
-                'face_unknown'
-            ]
+                'intrusion',
+                'face_unknown',
+            ],
         ).count()
 
         informes_today = Informe.objects.filter(
@@ -282,18 +288,45 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             SecurityEvent.objects
             .values('event_type')
             .annotate(total=Count('id'))
-            .order_by('-total')
         )
 
+        distribution_totals = {
+            item['event_type']: item['total']
+            for item in raw_distribution
+        }
+        event_type_order = [
+            'dangerous_object',
+            'authorized_object',
+            'unauthorized_object',
+            'face_recognized',
+            'face_unknown',
+            'unauthorized_access',
+            'intrusion',
+            'ppe_missing',
+        ]
         event_breakdown = []
 
-        for item in raw_distribution:
-            event_type = item['event_type']
+        for event_type in event_type_order:
+            total = distribution_totals.get(event_type, 0)
 
+            if total:
+                event_breakdown.append({
+                    'key': event_type,
+                    'label': event_type_display.get(event_type, event_type),
+                    'total': total,
+                })
+
+        known_event_types = set(event_type_order)
+        remaining_event_types = sorted(
+            set(distribution_totals) - known_event_types,
+            key=lambda event_type: event_type_display.get(event_type, event_type),
+        )
+
+        for event_type in remaining_event_types:
             event_breakdown.append({
                 'key': event_type,
                 'label': event_type_display.get(event_type, event_type),
-                'total': item['total'],
+                'total': distribution_totals[event_type],
             })
 
         event_labels = [
@@ -320,6 +353,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'total_events': total_events,
             'total_events_today': total_events_today,
             'critical_alerts': critical_alerts,
+            'unauthorized_accesses_today': unauthorized_accesses_today,
             'informes_today': informes_today,
 
             'epp_percent': epp_percent,

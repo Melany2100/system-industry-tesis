@@ -63,6 +63,115 @@
   flex: 0 0 auto;
 }
 
+.event-date-range {
+  display: block;
+  margin-top: 0.25rem;
+  color: #8392ab;
+  font-size: 0.72rem;
+}
+
+.event-date-filter {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.event-date-filter__toggle {
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #eef5ff;
+  color: #386fa4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.event-date-filter__toggle:hover,
+.event-date-filter__toggle[aria-expanded="true"] {
+  background: #386fa4;
+  color: #fff;
+}
+
+.event-date-filter__toggle i {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.event-date-filter__panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  width: 250px;
+  padding: 1rem;
+  border: 1px solid #e9ecef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(23, 43, 77, 0.18);
+}
+
+.event-date-filter__panel[hidden] {
+  display: none;
+}
+
+.event-date-filter__panel strong,
+.event-date-filter__panel label {
+  display: block;
+  color: #172b4d;
+}
+
+.event-date-filter__panel strong {
+  margin-bottom: 0.75rem;
+  font-size: 0.88rem;
+}
+
+.event-date-filter__panel label {
+  margin: 0.65rem 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.event-date-filter__panel input,
+.event-date-filter__panel select {
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  color: #344767;
+  background: #fff;
+  font-size: 0.8rem;
+}
+
+.event-date-filter__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.event-date-filter__actions a {
+  color: #8392ab;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.event-date-filter__actions button {
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: #386fa4;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
 .summary-list,
 .risk-summary-list {
   display: flex;

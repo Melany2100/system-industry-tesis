@@ -1,4 +1,10 @@
 $(document).ready(function () {
+  // Inicializar tooltips de Bootstrap
+  const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.map(function (tooltipTriggerEl) {
+    return new bootstrap.Tooltip(tooltipTriggerEl);
+  });
+
   let lastVideoErrorAt = 0;
   let cameraStatusTimer = null;
 

@@ -33,17 +33,17 @@
 
     <div class="alerts-summary">
       <div class="alert-stat">
-        <span>Total</span>
+        <span>Total de hoy</span>
         <strong id="alertTotal">0</strong>
       </div>
 
       <div class="alert-stat alert-stat-danger">
-        <span>Alta prioridad</span>
+        <span>Alta prioridad hoy</span>
         <strong id="alertHigh">0</strong>
       </div>
 
       <div class="alert-stat alert-stat-success">
-        <span>Resueltas</span>
+        <span>Resueltas hoy</span>
         <strong id="alertResolved">0</strong>
       </div>
 
@@ -436,14 +436,10 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 }
 
-  function updateSummary(events) {
-    const total = events.length;
-    const high = events.filter(event => isHighPriority(event) && !event.resolved).length;
-    const resolved = events.filter(event => event.resolved).length;
-
-    document.getElementById("alertTotal").innerText = total;
-    document.getElementById("alertHigh").innerText = high;
-    document.getElementById("alertResolved").innerText = resolved;
+  function updateSummary(summary = {}) {
+    document.getElementById("alertTotal").innerText = Number(summary.total_today || 0);
+    document.getElementById("alertHigh").innerText = Number(summary.high_priority_today || 0);
+    document.getElementById("alertResolved").innerText = Number(summary.resolved_today || 0);
   }
 
   function getFilterValues() {
@@ -524,7 +520,6 @@ document.addEventListener("DOMContentLoaded", function () {
       eventMatchesFilters(event, filters)
     );
 
-    updateSummary(ALERT_SYSTEM.filteredAlerts);
     updateFilterButtonState();
     renderAlerts(ALERT_SYSTEM.filteredAlerts);
   }
@@ -560,6 +555,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         ALERT_SYSTEM.currentAlerts = events;
 
+        updateSummary(data.summary);
         applyFilters();
       })
       .catch(error => {

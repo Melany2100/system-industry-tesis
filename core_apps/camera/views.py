@@ -2200,6 +2200,22 @@ def get_security_events(request):
     events = _filtered_security_events_queryset(request)
     severity = _requested_alert_level(request.GET.get("severity") or request.GET.get("priority"))
     max_events_to_scan = 1000 if severity else 50
+    today_start, tomorrow_start = _local_day_bounds(timezone.localdate().isoformat())
+    daily_events = SecurityEvent.objects.filter(
+        timestamp__gte=today_start,
+        timestamp__lt=tomorrow_start,
+    )
+    daily_summary = {
+        "total_today": daily_events.count(),
+        "high_priority_today": daily_events.filter(
+            severity__in=("ALTO", "CRITICO")
+        ).count(),
+        "resolved_today": SecurityEvent.objects.filter(
+            resolved=True,
+            managed_at__gte=today_start,
+            managed_at__lt=tomorrow_start,
+        ).count(),
+    }
     user_authorized_person = get_authorized_person_for_user(request.user)
     scanned_events = list(events[:max_events_to_scan])
     detection_counts = _detection_counts_for_people(
@@ -2223,7 +2239,7 @@ def get_security_events(request):
         if len(events_data) >= 50:
             break
 
-    return JsonResponse({"events": events_data})
+    return JsonResponse({"events": events_data, "summary": daily_summary})
 
 
 @login_required(login_url="/login/")

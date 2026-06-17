@@ -177,6 +177,13 @@ DEFAULT_FROM_EMAIL = os.getenv(
 )
 EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 
+# YOLO - objetos de riesgo con modelo preentrenado COCO.
+RISK_YOLO_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
+RISK_YOLO_CONF = 0.35
+RISK_YOLO_IMGSZ = 640
+RISK_YOLO_FRAME_INTERVAL = 3
+RISK_YOLO_CLASSES = [14, 15, 16, 24, 26, 28, 39, 43, 67, 76]
+
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 

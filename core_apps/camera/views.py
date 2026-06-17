@@ -847,6 +847,8 @@ def _load_yolo_locked():
 _PPE_CACHE = {"model": None}
 _PPE_LOAD_LOCK = Lock()
 _PPE_INFERENCE_LOCK = Lock()
+_RISK_YOLO_CACHE = {"detector": None}
+_RISK_YOLO_LOAD_LOCK = Lock()
 
 
 def _load_ppe_model():
@@ -878,6 +880,23 @@ def _load_ppe_model_locked():
         return None
 
 
+def _load_risk_yolo_detector():
+    with _RISK_YOLO_LOAD_LOCK:
+        if _RISK_YOLO_CACHE["detector"] is not None:
+            return _RISK_YOLO_CACHE["detector"]
+
+        try:
+            from core_apps.camera.services.risk_yolo_detector import get_risk_yolo_detector
+
+            detector = get_risk_yolo_detector()
+            _RISK_YOLO_CACHE["detector"] = detector
+            _log_line("YOLOv8s objetos de riesgo cargado", key="risk_yolo_loaded", throttle_sec=10)
+            return detector
+        except Exception as e:
+            _log_line(f"Error cargando YOLOv8s objetos de riesgo: {e}", key="risk_yolo_load_err", throttle_sec=10)
+            return None
+
+
 _MODEL_PRELOAD_LOCK = Lock()
 _MODEL_PRELOAD_DONE = Event()
 _MODEL_PRELOAD_STARTED = False
@@ -888,6 +907,7 @@ def _preload_camera_models_task():
         _safe_import_cv2()
         _safe_import_numpy()
         _load_yolo()
+        _load_risk_yolo_detector()
         _load_ppe_model()
         _load_face_recognition()
         _log_line("Modelos de camara precargados", key="models_preloaded", throttle_sec=10)
@@ -916,11 +936,12 @@ def preload_camera_models(async_load: bool = True):
 
 def _attach_preloaded_models():
     if not _MODEL_PRELOAD_DONE.is_set():
-        return None, None, None, None
+        return None, None, None, None, None
 
     return (
         _YOLO_CACHE["net"],
         _YOLO_CACHE["classes"],
+        _RISK_YOLO_CACHE["detector"],
         _PPE_CACHE["model"],
         _FACE_RECOGNITION_CACHE["module"],
     )
@@ -940,6 +961,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     preload_camera_models(async_load=True)
     net = None
     coco_classes = None
+    risk_yolo_detector = None
     ppe_model = None
     face_rec = None
     models_attached = False
@@ -986,6 +1008,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     last_ppe_event_frame = -999
 
     target_fps = max(1, min(int(target_fps), 30))
+    risk_yolo_frame_interval = max(1, int(getattr(settings, "RISK_YOLO_FRAME_INTERVAL", 3)))
     frame_interval = 1.0 / float(target_fps)
     next_frame_at = time.monotonic()
 
@@ -1003,12 +1026,22 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             now = time.monotonic()
 
             if not models_attached and _MODEL_PRELOAD_DONE.is_set():
-                net, coco_classes, ppe_model, face_rec = _attach_preloaded_models()
+                net, coco_classes, risk_yolo_detector, ppe_model, face_rec = _attach_preloaded_models()
                 models_attached = True
 
-                if net is not None or ppe_model is not None or face_rec is not None:
+                if (
+                    net is not None
+                    or risk_yolo_detector is not None
+                    or ppe_model is not None
+                    or face_rec is not None
+                ):
                     _log_line(
-                        f"Modelos activos para {camera_name}",
+                        (
+                            f"Modelos activos para {camera_name} | "
+                            f"YOLOv8s riesgo: {'si' if risk_yolo_detector is not None else 'no'} "
+                            f"(conf={getattr(settings, 'RISK_YOLO_CONF', 0.35)}, "
+                            f"cada {risk_yolo_frame_interval} frames)"
+                        ),
                         key=f"models_ready_{camera.id}",
                         throttle_sec=10,
                     )
@@ -1205,8 +1238,64 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                     2,
                 )
 
-            # YOLO dangerous objects
-            if frame_counter % 6 == 0 and net is not None and coco_classes is not None:
+            # YOLOv8s preentrenado para objetos de riesgo.
+            if frame_counter % risk_yolo_frame_interval == 0 and risk_yolo_detector is not None:
+                try:
+                    risk_detections = risk_yolo_detector.detect(frame)
+                    frame = risk_yolo_detector.draw_detections(frame, risk_detections)
+
+                    for detection in risk_detections:
+                        _log_line(
+                            f"OBJ [{camera_name}]: {detection.internal_label} "
+                            f"({detection.confidence:.2f}) | Nivel {detection.severity}",
+                            key=f"risk_obj_{camera.id}_{detection.internal_label}",
+                            throttle_sec=0.25,
+                        )
+
+                        if not detection.should_alert:
+                            continue
+
+                        event_key = (
+                            f"{detection.event_type}_camera_{camera.id}_"
+                            f"{detection.internal_label}"
+                        )
+
+                        if can_save_event(event_key, seconds=20):
+                            details = (
+                                f"{detection.message} | Categoria: {detection.category} "
+                                f"| Nivel: {detection.severity} "
+                                f"| Confianza: {detection.confidence:.2f}"
+                            )
+
+                            create_security_event(
+                                event_type=detection.event_type,
+                                details=details,
+                                frame=frame.copy(),
+                                user=None,
+                                camera=camera,
+                                epp_correcto=False,
+                                severity=detection.severity,
+                            )
+
+                            _log_line(
+                                f"Evidencia guardada [{camera_name}]: "
+                                f"{detection.internal_label} ({detection.severity})",
+                                key=(
+                                    f"risk_evidence_{camera.id}_{detection.event_type}_"
+                                    f"{detection.internal_label}"
+                                ),
+                                throttle_sec=2,
+                            )
+
+                except Exception as e:
+                    _log_line(
+                        f"Error YOLOv8s objetos [{camera_name}]: {e}",
+                        key=f"risk_yolo_detect_err_{camera.id}",
+                        throttle_sec=5,
+                    )
+
+            # YOLOv3-tiny queda como respaldo si YOLOv8s no esta disponible.
+            elif frame_counter % risk_yolo_frame_interval == 0 and net is not None and coco_classes is not None:
                 blob = cv2.dnn.blobFromImage(
                     frame,
                     1 / 255.0,

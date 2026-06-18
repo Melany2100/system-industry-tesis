@@ -15,10 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
     profile: page.dataset.updateProfileUrl,
     email: page.dataset.updateEmailUrl,
     password: page.dataset.updatePasswordUrl,
-    appearance: page.dataset.updateAppearanceUrl,
-    darkmode: page.dataset.updateAppearanceUrl,
-    notifications: page.dataset.updateNotificationsUrl,
-    login: page.dataset.updateSecurityUrl,
+    'admin-users': page.dataset.createUserUrl,
   };
 
   function getActiveSectionId() {
@@ -34,21 +31,6 @@ document.addEventListener('DOMContentLoaded', function () {
   function getValue(name) {
     const input = page.querySelector(`[name="${name}"]`);
     return input ? input.value.trim() : '';
-  }
-
-  function getChecked(name) {
-    const input = page.querySelector(`[name="${name}"]`);
-    return Boolean(input && input.checked);
-  }
-
-  function updateThemePreview() {
-    const color = getValue('theme_color') || 'azul';
-    const themeClasses = ['theme-verde', 'theme-azul', 'theme-morado', 'theme-rojo'];
-
-    page.classList.remove(...themeClasses);
-    page.classList.add(`theme-${color}`);
-    page.classList.toggle('is-dark-mode', getChecked('dark_mode'));
-    page.classList.toggle('is-compact-layout', getChecked('compact_layout'));
   }
 
   function buildPayload(sectionId) {
@@ -74,32 +56,56 @@ document.addEventListener('DOMContentLoaded', function () {
       };
     }
 
-    if (sectionId === 'appearance' || sectionId === 'darkmode') {
+    if (sectionId === 'admin-users') {
       return {
-        theme_color: getValue('theme_color'),
-        compact_layout: getChecked('compact_layout'),
-        dark_mode: getChecked('dark_mode'),
-      };
-    }
-
-    if (sectionId === 'notifications') {
-      return {
-        security_alerts: getChecked('security_alerts'),
-        email_alerts: getChecked('email_alerts'),
-      };
-    }
-
-    if (sectionId === 'login') {
-      return {
-        extra_verification: getChecked('extra_verification'),
+        username: getValue('new_user_username'),
+        first_name: getValue('new_user_first_name'),
+        last_name: getValue('new_user_last_name'),
+        email: getValue('new_user_email'),
+        password: getValue('new_user_password'),
+        role: getValue('new_user_role') || 'operador',
       };
     }
 
     return null;
   }
 
-  async function saveActiveSection() {
-    const sectionId = getActiveSectionId();
+  function clearInputs(names) {
+    names.forEach(function (name) {
+      const input = page.querySelector(`[name="${name}"]`);
+
+      if (input) {
+        input.value = '';
+      }
+    });
+  }
+
+  function prependUser(user) {
+    const list = page.querySelector('#managedUsersList');
+
+    if (!list) {
+      return;
+    }
+
+    const row = document.createElement('div');
+    const info = document.createElement('div');
+    const name = document.createElement('strong');
+    const meta = document.createElement('span');
+    const badge = document.createElement('span');
+    const fullName = user.full_name || user.username;
+    const emailText = user.email ? ` | ${user.email}` : '';
+
+    row.className = 'settings-user-row';
+    badge.className = 'settings-role-badge';
+    name.textContent = fullName;
+    meta.textContent = `${user.username}${emailText}`;
+    badge.textContent = user.role;
+    info.append(name, meta);
+    row.append(info, badge);
+    list.prepend(row);
+  }
+
+  async function saveSection(sectionId) {
     const url = urls[sectionId];
     const payload = buildPayload(sectionId);
 
@@ -128,15 +134,20 @@ document.addEventListener('DOMContentLoaded', function () {
       }
 
       showFeedback(data.message, 'success');
-      updateThemePreview();
+
+      if (sectionId === 'admin-users' && data.user) {
+        prependUser(data.user);
+        clearInputs([
+          'new_user_username',
+          'new_user_first_name',
+          'new_user_last_name',
+          'new_user_email',
+          'new_user_password',
+        ]);
+      }
 
       if (sectionId === 'password') {
-        ['current_password', 'new_password', 'confirm_password'].forEach(function (name) {
-          const input = page.querySelector(`[name="${name}"]`);
-          if (input) {
-            input.value = '';
-          }
-        });
+        clearInputs(['current_password', 'new_password', 'confirm_password']);
       }
     } catch (error) {
       showFeedback(error.message, 'error');
@@ -170,13 +181,13 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  ['theme_color', 'compact_layout', 'dark_mode'].forEach(function (name) {
-    const input = page.querySelector(`[name="${name}"]`);
-    if (input) {
-      input.addEventListener('change', updateThemePreview);
-    }
+  page.querySelectorAll('[data-submit-section]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      saveSection(button.getAttribute('data-submit-section'));
+    });
   });
 
-  saveButton.addEventListener('click', saveActiveSection);
-  updateThemePreview();
+  saveButton.addEventListener('click', function () {
+    saveSection(getActiveSectionId());
+  });
 });

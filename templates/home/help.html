@@ -1,0 +1,94 @@
+{% extends 'layouts/base.html' %}
+{% load static %}
+
+{% block title %}Ayuda{% endblock title %}
+
+{% block stylesheets %}
+<link rel="stylesheet" href="{% static 'assets/css/pages/help.css' %}?v=1">
+{% endblock stylesheets %}
+
+{% block content %}
+
+<section class="help-page">
+  <div class="help-hero">
+    <span class="help-eyebrow">Guia rapida</span>
+    <h1>Ayuda del sistema SMRI</h1>
+    <p>
+      Esta seccion resume el uso principal del sistema de monitoreo de riesgos industriales,
+      sus roles y las detecciones realizadas con vision artificial.
+    </p>
+  </div>
+
+  <div class="help-grid">
+    <article class="help-card">
+      <div class="help-card__icon">
+        <i class="bi bi-box-arrow-in-right"></i>
+      </div>
+      <h2>Como iniciar sesion</h2>
+      <p>
+        Ingresa desde la pantalla de login con el usuario o correo y la contrasena asignada.
+        Las credenciales son creadas previamente por un Admin o un Jefe autorizado.
+      </p>
+    </article>
+
+    <article class="help-card">
+      <div class="help-card__icon">
+        <i class="bi bi-person-plus"></i>
+      </div>
+      <h2>Como registrarse</h2>
+      <p>
+        El sistema no permite registro publico. Para crear una cuenta, el Admin o el Jefe debe
+        ir a Configuracion, abrir Usuarios y roles, ingresar los datos del usuario y asignar
+        el rol correspondiente.
+      </p>
+    </article>
+
+    <article class="help-card">
+      <div class="help-card__icon">
+        <i class="bi bi-layout-text-window-reverse"></i>
+      </div>
+      <h2>Como usar el sistema</h2>
+      <p>
+        El Dashboard muestra el resumen general de eventos y alertas. La seccion Alertas permite
+        revisar incidentes detectados. Los roles con permisos administrativos pueden gestionar
+        usuarios, camaras e informes segun su nivel de acceso.
+      </p>
+    </article>
+
+    <article class="help-card">
+      <div class="help-card__icon">
+        <i class="bi bi-camera-video"></i>
+      </div>
+      <h2>Que detecta el sistema</h2>
+      <p>
+        El sistema detecta rostros autorizados o desconocidos, incumplimientos de EPP, objetos
+        de riesgo como cuchillos, tijeras, celulares, bolsos o mochilas, y accesos no autorizados
+        dentro de las areas monitoreadas.
+      </p>
+    </article>
+
+    <article class="help-card">
+      <div class="help-card__icon">
+        <i class="bi bi-shield-lock"></i>
+      </div>
+      <h2>Roles del sistema</h2>
+      <p>
+        Admin tiene acceso total. Jefe puede crear Jefes y Operadores, pero no accede al panel
+        administrativo ni a la gestion de camaras. Operador tiene acceso limitado al Dashboard,
+        Alertas y configuracion personal.
+      </p>
+    </article>
+
+    <article class="help-card help-card--authors">
+      <div class="help-card__icon">
+        <i class="bi bi-people"></i>
+      </div>
+      <h2>Autoras del producto</h2>
+      <p>
+        Producto realizado por Eva Melany Vargas Peñafiel y Mayerli Soria.
+      </p>
+    </article>
+  </div>
+</section>
+
+{% endblock content %}

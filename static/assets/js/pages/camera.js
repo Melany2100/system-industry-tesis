@@ -182,7 +182,7 @@ $(document).ready(function () {
     $('#noCameraBox').remove();
     ensureVideoFeedExists();
 
-    const finalUrl = videoUrl + '?fps=8&t=' + Date.now();
+    const finalUrl = videoUrl + '?fps=5&t=' + Date.now();
 
     lastVideoErrorAt = 0;
 

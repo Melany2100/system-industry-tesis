@@ -94,7 +94,7 @@ RISK_RULES = {
         "category": "Acceso no autorizado",
         "severity": "ALTO",
         "event_type": "unauthorized_access",
-        "message": "Acceso no autorizado detectado",
+        "message": "Acceso no autorizado: animal en el area monitoreada (posible perro/gato)",
         "color": (0, 165, 255),
         "should_alert": True,
     },
@@ -102,7 +102,7 @@ RISK_RULES = {
         "category": "Acceso no autorizado",
         "severity": "ALTO",
         "event_type": "unauthorized_access",
-        "message": "Acceso no autorizado detectado",
+        "message": "Acceso no autorizado: gato en el area monitoreada",
         "color": (0, 165, 255),
         "should_alert": True,
     },
@@ -110,7 +110,7 @@ RISK_RULES = {
         "category": "Acceso no autorizado",
         "severity": "ALTO",
         "event_type": "unauthorized_access",
-        "message": "Acceso no autorizado detectado",
+        "message": "Acceso no autorizado: ave en el area monitoreada",
         "color": (0, 165, 255),
         "should_alert": True,
     },
@@ -173,6 +173,13 @@ class RiskYoloDetector:
 
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             confidence = float(box.conf[0])
+            alert_conf = getattr(settings, "RISK_YOLO_ALERT_CONF", {}).get(
+                internal_label,
+                self.conf,
+            )
+
+            if confidence < alert_conf:
+                continue
 
             detections.append(
                 RiskDetection(

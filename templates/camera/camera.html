@@ -81,7 +81,7 @@
       <div class="camera-screen" id="cameraScreen">
         {% if selected_camera and selected_camera.is_active %}
           <img
-            src="{% url 'video_feed_camera' selected_camera.id %}?fps=8"
+            src="{% url 'video_feed_camera' selected_camera.id %}?fps=5"
             class="camera-feed"
             id="videoFeed"
             alt="Video en vivo">

@@ -63,6 +63,10 @@ class SecurityEvent(models.Model):
         ('authorized_object', 'Objeto autorizado'),
         ('unauthorized_object', 'Objeto no autorizado'),
         ('dangerous_object', 'Objeto peligroso detectado'),
+        ('fall_detected', 'Posible caida'),
+        ('phone_usage', 'Uso prolongado de celular'),
+        ('collision_risk', 'Riesgo de choque'),
+        ('cut_risk', 'Riesgo de corte'),
         ('unauthorized_access', 'Acceso no autorizado'),
     )
     SEVERITY_LEVELS = (

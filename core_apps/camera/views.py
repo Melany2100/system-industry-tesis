@@ -381,6 +381,10 @@ DEFAULT_EVENT_LEVELS = {
     "authorized_object": "BAJO",
     "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
+    "fall_detected": "CRITICO",
+    "phone_usage": "ALTO",
+    "collision_risk": "ALTO",
+    "cut_risk": "CRITICO",
     "unauthorized_access": "ALTO",
 }
 ALERT_LEVEL_PATTERN = re.compile(
@@ -882,6 +886,8 @@ _PPE_LOAD_LOCK = Lock()
 _PPE_INFERENCE_LOCK = Lock()
 _RISK_YOLO_CACHE = {"detector": None}
 _RISK_YOLO_LOAD_LOCK = Lock()
+_VISION_EVENT_CACHE = {"detectors": {}}
+_VISION_EVENT_LOAD_LOCK = Lock()
 
 
 def _load_ppe_model():
@@ -930,6 +936,23 @@ def _load_risk_yolo_detector():
             return None
 
 
+def _load_vision_event_detector(key="preload"):
+    with _VISION_EVENT_LOAD_LOCK:
+        if key in _VISION_EVENT_CACHE["detectors"]:
+            return _VISION_EVENT_CACHE["detectors"][key]
+
+        try:
+            from core_apps.camera.services.vision_event_detector import get_vision_event_detector
+
+            detector = get_vision_event_detector(key=key)
+            _VISION_EVENT_CACHE["detectors"][key] = detector
+            _log_line("Detector visual general cargado", key="vision_event_loaded", throttle_sec=10)
+            return detector
+        except Exception as e:
+            _log_line(f"Error cargando detector visual general: {e}", key="vision_event_load_err", throttle_sec=10)
+            return None
+
+
 _MODEL_PRELOAD_LOCK = Lock()
 _MODEL_PRELOAD_DONE = Event()
 _MODEL_PRELOAD_STARTED = False
@@ -941,6 +964,7 @@ def _preload_camera_models_task():
         _safe_import_numpy()
         _load_yolo()
         _load_risk_yolo_detector()
+        _load_vision_event_detector()
         _load_ppe_model()
         _load_face_recognition()
         _log_line("Modelos de camara precargados", key="models_preloaded", throttle_sec=10)
@@ -995,6 +1019,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     net = None
     coco_classes = None
     risk_yolo_detector = None
+    vision_event_detector = None
     ppe_model = None
     face_rec = None
     models_attached = False
@@ -1034,6 +1059,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     known_face_metadata = []
     current_faces = []
     last_detected_faces = []
+    unauthorized_face_memory = {}
     ppe_violation_memory = {}
     object_presence_memory = {}
 
@@ -1042,6 +1068,9 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
     target_fps = max(1, min(int(target_fps), 30))
     risk_yolo_frame_interval = max(1, int(getattr(settings, "RISK_YOLO_FRAME_INTERVAL", 3)))
+    face_recognition_frame_interval = max(1, int(getattr(settings, "FACE_RECOGNITION_FRAME_INTERVAL", 12)))
+    face_detection_frame_interval = max(1, int(getattr(settings, "FACE_DETECTION_FRAME_INTERVAL", 8)))
+    ppe_frame_interval = max(1, int(getattr(settings, "PPE_FRAME_INTERVAL", 30)))
     frame_interval = 1.0 / float(target_fps)
     next_frame_at = time.monotonic()
 
@@ -1060,11 +1089,13 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
             if not models_attached and _MODEL_PRELOAD_DONE.is_set():
                 net, coco_classes, risk_yolo_detector, ppe_model, face_rec = _attach_preloaded_models()
+                vision_event_detector = _load_vision_event_detector(key=f"camera:{camera.id}")
                 models_attached = True
 
                 if (
                     net is not None
                     or risk_yolo_detector is not None
+                    or vision_event_detector is not None
                     or ppe_model is not None
                     or face_rec is not None
                 ):
@@ -1072,6 +1103,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         (
                             f"Modelos activos para {camera_name} | "
                             f"YOLOv8s riesgo: {'si' if risk_yolo_detector is not None else 'no'} "
+                            f"| vision general: {'si' if vision_event_detector is not None else 'no'} "
                             f"(conf={getattr(settings, 'RISK_YOLO_CONF', 0.35)}, "
                             f"cada {risk_yolo_frame_interval} frames)"
                         ),
@@ -1104,7 +1136,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
             # Face detection and recognition
             if face_rec is not None:
-                if frame_counter % 6 == 0:
+                if frame_counter % face_recognition_frame_interval == 0:
                     # Sync authorized faces from database periodically (every 10 seconds)
                     if now - last_face_db_sync > 10.0:
                         known_face_encodings = []
@@ -1148,12 +1180,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         x2 = right * 2
                         y2 = bottom * 2
 
-                        # Try to match with a previously tracked face (Euclidean distance < 50px)
+                        # Try to match with a previously tracked face.
                         tracked_face = None
                         best_dist = 999.0
                         for f in last_detected_faces:
                             dist = np.sqrt((cx - f["center"][0])**2 + (cy - f["center"][1])**2)
-                            if dist < 50.0 and dist < best_dist:
+                            if dist < 80.0 and dist < best_dist:
                                 best_dist = dist
                                 tracked_face = f
 
@@ -1163,8 +1195,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         person_obj = None
 
                         if known_face_encodings:
-                            # Using 0.6 tolerance (default, balanced)
-                            matches = face_rec.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)
+                            tolerance = getattr(settings, "FACE_RECOGNITION_TOLERANCE", 0.65)
+                            matches = face_rec.compare_faces(
+                                known_face_encodings,
+                                face_encoding,
+                                tolerance=tolerance,
+                            )
                             if True in matches:
                                 face_distances = face_rec.face_distance(known_face_encodings, face_encoding)
                                 best_match_idx = np.argmin(face_distances)
@@ -1198,6 +1234,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         })
 
                         if is_authorized:
+                            unauthorized_face_memory.clear()
                             current_faces.append((x1, y1, x2, y2, f"Autorizado: {name}", (0, 255, 0)))
 
                             # El reconocimiento autorizado se conserva solo en el log y
@@ -1208,6 +1245,23 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 throttle_sec=15.0
                             )
                         else:
+                            face_key = f"{camera.id}:{cx // 40}:{cy // 40}"
+                            memory_entry = unauthorized_face_memory.get(
+                                face_key,
+                                {"count": 0, "last_seen": now},
+                            )
+                            memory_entry["count"] += 1
+                            memory_entry["last_seen"] = now
+                            unauthorized_face_memory[face_key] = memory_entry
+                            is_confirmed_unauthorized = (
+                                memory_entry["count"]
+                                >= getattr(settings, "FACE_UNAUTHORIZED_CONFIRMATION_FRAMES", 3)
+                            )
+
+                            if not is_confirmed_unauthorized:
+                                current_faces.append((x1, y1, x2, y2, "Verificando rostro...", (0, 165, 255)))
+                                continue
+
                             current_faces.append((x1, y1, x2, y2, "NO AUTORIZADO", (0, 0, 255)))
 
                             # Log and alert
@@ -1230,6 +1284,10 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 except Exception as e:
                                     print(f"Error saving unauthorized event: {e}")
 
+                    for key in list(unauthorized_face_memory.keys()):
+                        if now - unauthorized_face_memory[key].get("last_seen", 0.0) > 8.0:
+                            del unauthorized_face_memory[key]
+
                     # Mantener rostros detectados recientemente para que PPE pueda asociarlos
                     # aunque face_recognition no los vea en este frame exacto.
                     last_detected_faces = _merge_recent_faces(
@@ -1239,7 +1297,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                     )
             else:
                 # Fallback to Haar Cascade
-                if frame_counter % 3 == 0:
+                if frame_counter % face_detection_frame_interval == 0:
                     gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
                     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
@@ -1278,9 +1336,19 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                     frame = risk_yolo_detector.draw_detections(frame, risk_detections)
 
                     for detection in risk_detections:
+                        if detection.internal_label in {"cat", "dog", "bird"}:
+                            risk_log_message = (
+                                f"ALERTA [{camera_name}]: {detection.message} "
+                                f"({detection.confidence:.2f})"
+                            )
+                        else:
+                            risk_log_message = (
+                                f"OBJ [{camera_name}]: {detection.internal_label} "
+                                f"({detection.confidence:.2f}) | Nivel {detection.severity}"
+                            )
+
                         _log_line(
-                            f"OBJ [{camera_name}]: {detection.internal_label} "
-                            f"({detection.confidence:.2f}) | Nivel {detection.severity}",
+                            risk_log_message,
                             key=f"risk_obj_{camera.id}_{detection.internal_label}",
                             throttle_sec=0.25,
                         )
@@ -1327,8 +1395,112 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         throttle_sec=5,
                     )
 
+            if vision_event_detector is not None:
+                try:
+                    vision_event_detector.submit(
+                        frame,
+                        identities=last_detected_faces,
+                    )
+                    vision_events, alert_events = vision_event_detector.get_latest()
+
+                    for event in vision_events:
+                        if event.event_type != "phone_usage":
+                            continue
+
+                        person_text = f" | {event.person_name}" if event.person_name else ""
+                        confidence_text = (
+                            f" ({event.confidence:.2f})"
+                            if event.confidence is not None
+                            else ""
+                        )
+
+                        _log_line(
+                            f"PHONE [{camera_name}]: celular detectado{confidence_text}{person_text}",
+                            key=f"phone_live_{camera.id}_{event.person_name or 'unknown'}",
+                            throttle_sec=3.0,
+                        )
+
+                    for event in alert_events:
+                        if event.confidence is not None:
+                            confidence_text = f" ({event.confidence:.2f})"
+                        else:
+                            confidence_text = ""
+
+                        person_text = f" | {event.person_name}" if event.person_name else ""
+                        if event.event_type == "dangerous_object":
+                            log_message = (
+                                f"ALERTA [{camera_name}]: objeto peligroso "
+                                f"{event.object_label or ''}{confidence_text} | posibles cortes"
+                            )
+                        elif event.event_type == "phone_usage":
+                            log_message = (
+                                f"ALERTA [{camera_name}]: celular no autorizado en el area"
+                                f"{confidence_text}{person_text}"
+                            )
+                        elif event.event_type == "fall_detected":
+                            log_message = (
+                                f"ALERTA [{camera_name}]: posible caida{person_text}"
+                            )
+                        else:
+                            log_message = (
+                                f"VISION [{camera_name}]: {event.event_type}{confidence_text} "
+                                f"| Nivel {event.severity}{person_text}"
+                            )
+
+                        _log_line(
+                            log_message,
+                            key=f"vision_{camera.id}_{event.event_type}_{event.object_label or 'event'}",
+                            throttle_sec=0.5,
+                        )
+
+                        if event.event_type == "dangerous_object" and event.object_label:
+                            event_key = (
+                                f"{event.event_type}_camera_{camera.id}_"
+                                f"{event.object_label}"
+                            )
+                        elif event.object_label:
+                            event_key = (
+                                f"vision_{event.event_type}_camera_{camera.id}_"
+                                f"{event.object_label}"
+                            )
+                        else:
+                            event_key = f"vision_{event.event_type}_camera_{camera.id}"
+
+                        if can_save_event(event_key, seconds=getattr(settings, "EVENT_COOLDOWN_SECONDS", 10)):
+                            create_security_event(
+                                event_type=event.event_type,
+                                details=event.details,
+                                frame=frame.copy(),
+                                user=None,
+                                camera=camera,
+                                authorized_person=event.authorized_person,
+                                epp_correcto=False,
+                                severity=event.severity,
+                            )
+
+                            _log_line(
+                                f"Evidencia guardada [{camera_name}]: "
+                                f"{event.event_type} ({event.severity})",
+                                key=f"vision_evidence_{camera.id}_{event.event_type}",
+                                throttle_sec=2,
+                            )
+
+                    frame = vision_event_detector.draw(frame, vision_events)
+
+                except Exception as e:
+                    _log_line(
+                        f"Error detector visual [{camera_name}]: {e}",
+                        key=f"vision_event_detect_err_{camera.id}",
+                        throttle_sec=5,
+                    )
+
             # YOLOv3-tiny queda como respaldo si YOLOv8s no esta disponible.
-            elif frame_counter % risk_yolo_frame_interval == 0 and net is not None and coco_classes is not None:
+            if (
+                risk_yolo_detector is None
+                and frame_counter % risk_yolo_frame_interval == 0
+                and net is not None
+                and coco_classes is not None
+            ):
                 blob = cv2.dnn.blobFromImage(
                     frame,
                     1 / 255.0,
@@ -1464,7 +1636,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                 _prune_object_presence(object_presence_memory, observed_object_labels, now)
 
             # PPE
-            if ppe_model is not None and frame_counter % 15 == 0:
+            if ppe_model is not None and frame_counter % ppe_frame_interval == 0:
                 try:
                     with _PPE_INFERENCE_LOCK:
                         res = ppe_model(
@@ -1715,8 +1887,8 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             throttle_sec=2
         )
 
-CAMERA_WORKER_IDLE_SECONDS = 45.0
-CAMERA_SIGNAL_TIMEOUT_SECONDS = 4.0
+CAMERA_WORKER_IDLE_SECONDS = 90.0
+CAMERA_SIGNAL_TIMEOUT_SECONDS = 15.0
 
 _CAMERA_WORKERS: dict[int, "CameraStreamWorker"] = {}
 _CAMERA_WORKERS_LOCK = Lock()

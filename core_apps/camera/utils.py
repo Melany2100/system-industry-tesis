@@ -19,6 +19,10 @@ DEFAULT_EVENT_SEVERITIES = {
     "authorized_object": "BAJO",
     "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
+    "fall_detected": "CRITICO",
+    "phone_usage": "ALTO",
+    "collision_risk": "ALTO",
+    "cut_risk": "CRITICO",
     "unauthorized_access": "ALTO",
 }
 

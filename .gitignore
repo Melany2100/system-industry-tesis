@@ -178,3 +178,8 @@ cython_debug/
 #files
 *.jpg
 .ultralytics/
+
+echo runs/ >> .gitignore
+echo *.avi >> .gitignore
+echo *.mp4 >> .gitignore
+echo *.mov >> .gitignore

@@ -179,7 +179,11 @@ cython_debug/
 *.jpg
 .ultralytics/
 
-echo runs/ >> .gitignore
-echo *.avi >> .gitignore
-echo *.mp4 >> .gitignore
-echo *.mov >> .gitignore
+
+# Archivos generados por YOLO / pruebas
+runs/
+datasets/
+dataset/
+*.avi
+*.mp4
+*.mov

@@ -187,3 +187,7 @@ dataset/
 *.avi
 *.mp4
 *.mov
+
+# Modelos pesados
+*.pt
+*.onnx

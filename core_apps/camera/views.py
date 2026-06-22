@@ -325,29 +325,29 @@ def _filtered_security_events_queryset(request):
 # =========================
 # Helpers de identidad y asociación rostro/persona
 # =========================
-FACE_MEMORY_SECONDS = 6.0
-FACE_MATCH_DISTANCE = 90.0
+FACE_MEMORY_SECONDS = 12.0
+FACE_MATCH_DISTANCE = 220.0
 FACE_OVERLAP_THRESHOLD = 0.20
 
 ANIMAL_CLASSES = {"cat", "dog", "bird"}
 DEFAULT_OBJECT_CONFIDENCE = 0.35
 ANIMAL_OBJECT_CONFIDENCE = 0.20
 
-PPE_INFERENCE_IMGSZ = 960
-PPE_MODEL_CONFIDENCE = 0.25
+PPE_INFERENCE_IMGSZ = getattr(settings, "PPE_INFERENCE_IMGSZ", 960)
+PPE_MODEL_CONFIDENCE = getattr(settings, "PPE_MODEL_CONFIDENCE", 0.25)
 PPE_CONFIRMATION_FRAMES = 2
 PPE_ITEM_OVERLAP_THRESHOLD = 0.10
 PPE_VIOLATION_TTL_SECONDS = 6.0
 PPE_REQUIRED_ITEMS = ("mask", "gloves", "earmuffs")
 PPE_CLASS_CONFIDENCE = {
-    "person": 0.45,
+    "person": getattr(settings, "PPE_PERSON_CONFIDENCE", 0.45),
     "hardhat": 0.45,
-    "mask": 0.40,
+    "mask": getattr(settings, "PPE_MASK_CONFIDENCE", 0.40),
     "gloves": 0.45,
     "earmuffs": 0.45,
     "safety vest": 0.45,
     "no-hardhat": 0.65,
-    "no-mask": 0.65,
+    "no-mask": getattr(settings, "PPE_NO_MASK_CONFIDENCE", 0.65),
     "no-gloves": 0.65,
     "no-earmuffs": 0.65,
     "no-safety vest": 0.65,
@@ -1007,6 +1007,52 @@ def _attach_preloaded_models():
 # =========================
 # Frames (con FPS lento)
 # =========================
+class LatestFrameReader:
+    def __init__(self, cap, camera_name):
+        self.cap = cap
+        self.camera_name = camera_name
+        self._frame_lock = Lock()
+        self._latest_frame = None
+        self._latest_at = 0.0
+        self._stopped = Event()
+        self._thread = Thread(
+            target=self._read_loop,
+            name=f"latest-frame-{camera_name}",
+            daemon=True,
+        )
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stopped.set()
+        self._thread.join(timeout=1.0)
+
+    def get_latest(self, max_age_seconds=None):
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return False, None
+
+            if max_age_seconds is not None:
+                age = time.monotonic() - self._latest_at
+                if age > max_age_seconds:
+                    return False, None
+
+            return True, self._latest_frame.copy()
+
+    def _read_loop(self):
+        while not self._stopped.is_set():
+            ok, frame = self.cap.read()
+
+            if not ok:
+                time.sleep(0.05)
+                continue
+
+            with self._frame_lock:
+                self._latest_frame = frame
+                self._latest_at = time.monotonic()
+
+
 def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, should_stop=None):
     cv2 = _safe_import_cv2()
     np = _safe_import_numpy()
@@ -1050,6 +1096,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    latest_reader = None
+
+    if not isinstance(camera_source, int):
+        latest_reader = LatestFrameReader(cap, camera_name)
+        latest_reader.start()
 
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
@@ -1062,6 +1113,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     unauthorized_face_memory = {}
     ppe_violation_memory = {}
     object_presence_memory = {}
+    recent_area_context = {}
 
     frame_counter = 0
     last_ppe_event_frame = -999
@@ -1073,6 +1125,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     ppe_frame_interval = max(1, int(getattr(settings, "PPE_FRAME_INTERVAL", 30)))
     frame_interval = 1.0 / float(target_fps)
     next_frame_at = time.monotonic()
+    first_no_frame_at = None
 
     _log_line(
         f"🟢 Streaming iniciado: {camera_name} (fps={target_fps})",
@@ -1084,6 +1137,8 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
         while True:
             if should_stop is not None and should_stop():
                 break
+
+            first_no_frame_at = None
 
             now = time.monotonic()
 
@@ -1117,22 +1172,46 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             next_frame_at = max(next_frame_at + frame_interval, time.monotonic() + 0.001)
 
             # Para cámaras RTSP, intentamos descartar frames viejos acumulados
-            if not isinstance(camera_source, int):
-                for _ in range(2):
-                    cap.grab()
-
-            ok, frame = cap.read()
+            if latest_reader is not None:
+                ok, frame = latest_reader.get_latest(
+                    max_age_seconds=getattr(settings, "RTSP_STALE_FRAME_SECONDS", 8)
+                )
+            else:
+                ok, frame = cap.read()
 
             if not ok:
+                if first_no_frame_at is None:
+                    first_no_frame_at = time.monotonic()
+
                 _log_line(
                     f"❌ No se pudo leer frame de {camera_name}",
                     key=f"frame_fail_{camera.id}",
                     throttle_sec=5
                 )
-                break
+                elapsed_without_frame = time.monotonic() - first_no_frame_at
+                if elapsed_without_frame >= getattr(settings, "RTSP_INITIAL_FRAME_TIMEOUT_SECONDS", 15):
+                    _log_line(
+                        f"Streaming detenido por falta de frames: {camera_name}",
+                        key=f"frame_timeout_{camera.id}",
+                        throttle_sec=5,
+                    )
+                    break
+
+                time.sleep(0.1)
+                continue
+
+            first_no_frame_at = None
 
             frame_counter += 1
-            small_frame = cv2.resize(frame, (320, 240))
+            frame_height, frame_width = frame.shape[:2]
+            face_analysis_width = min(
+                frame_width,
+                max(320, int(getattr(settings, "FACE_ANALYSIS_WIDTH", 480))),
+            )
+            face_analysis_height = max(1, int(frame_height * (face_analysis_width / frame_width)))
+            small_frame = cv2.resize(frame, (face_analysis_width, face_analysis_height))
+            face_scale_x = frame_width / float(face_analysis_width)
+            face_scale_y = frame_height / float(face_analysis_height)
 
             # Face detection and recognition
             if face_rec is not None:
@@ -1172,13 +1251,22 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                     for face_loc, face_encoding in zip(face_locations, face_encodings):
                         top, right, bottom, left = face_loc
-                        cx = (left + right) // 2
-                        cy = (top + bottom) // 2
 
-                        x1 = left * 2
-                        y1 = top * 2
-                        x2 = right * 2
-                        y2 = bottom * 2
+                        x1 = int(left * face_scale_x)
+                        y1 = int(top * face_scale_y)
+                        x2 = int(right * face_scale_x)
+                        y2 = int(bottom * face_scale_y)
+                        face_width = x2 - x1
+                        face_height = y2 - y1
+
+                        if (
+                            face_width < frame_width * getattr(settings, "FACE_MIN_BOX_WIDTH_RATIO", 0.035)
+                            or face_height < frame_height * getattr(settings, "FACE_MIN_BOX_HEIGHT_RATIO", 0.055)
+                        ):
+                            continue
+
+                        cx = (x1 + x2) // 2
+                        cy = (y1 + y2) // 2
 
                         # Try to match with a previously tracked face.
                         tracked_face = None
@@ -1213,7 +1301,8 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         # If current frame says unauthorized, but we recognized them as authorized recently (last 4 seconds),
                         # preserve their authorized status to avoid flashing.
                         if not is_authorized and tracked_face is not None:
-                            if tracked_face["is_authorized"] and (now - tracked_face["last_authorized_ts"] < 4.0):
+                            auth_memory_seconds = getattr(settings, "FACE_AUTH_MEMORY_SECONDS", 10.0)
+                            if tracked_face["is_authorized"] and (now - tracked_face["last_authorized_ts"] < auth_memory_seconds):
                                 is_authorized = True
                                 person_obj = tracked_face["person_obj"]
                                 name = tracked_face["name"]
@@ -1257,9 +1346,14 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 memory_entry["count"]
                                 >= getattr(settings, "FACE_UNAUTHORIZED_CONFIRMATION_FRAMES", 3)
                             )
+                            should_display_verifying = (
+                                memory_entry["count"]
+                                >= getattr(settings, "FACE_UNAUTHORIZED_DISPLAY_FRAMES", 2)
+                            )
 
                             if not is_confirmed_unauthorized:
-                                current_faces.append((x1, y1, x2, y2, "Verificando rostro...", (0, 165, 255)))
+                                if should_display_verifying:
+                                    current_faces.append((x1, y1, x2, y2, "Verificando rostro...", (0, 165, 255)))
                                 continue
 
                             current_faces.append((x1, y1, x2, y2, "NO AUTORIZADO", (0, 0, 255)))
@@ -1310,10 +1404,10 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                     current_faces = []
                     for (x, y, w, h) in faces:
-                        x1 = x * 2
-                        y1 = y * 2
-                        x2 = (x + w) * 2
-                        y2 = (y + h) * 2
+                        x1 = int(x * face_scale_x)
+                        y1 = int(y * face_scale_y)
+                        x2 = int((x + w) * face_scale_x)
+                        y2 = int((y + h) * face_scale_y)
                         current_faces.append((x1, y1, x2, y2, "Rostro", (255, 0, 0)))
 
             # Draw current faces bounding boxes and labels
@@ -1341,6 +1435,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 f"ALERTA [{camera_name}]: {detection.message} "
                                 f"({detection.confidence:.2f})"
                             )
+                            recent_area_context["animal"] = {
+                                "message": detection.message,
+                                "last_seen": now,
+                                "confidence": detection.confidence,
+                            }
                         else:
                             risk_log_message = (
                                 f"OBJ [{camera_name}]: {detection.internal_label} "
@@ -1697,6 +1796,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         if negatives:
                             base_msg = "⚠ Indumentaria incorrecta: " + ", ".join(sorted([x.upper() for x in negatives]))
                             msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            animal_context = recent_area_context.get("animal")
+                            if animal_context and now - animal_context.get("last_seen", 0.0) <= 10.0:
+                                msg += (
+                                    " | Evento adicional: no autorizado identificado: "
+                                    f"{animal_context['message']}"
+                                )
                             violation_key = _ppe_violation_key(
                                 camera.id,
                                 (px1, py1, px2, py2),
@@ -1773,6 +1878,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         if missing:
                             base_msg = f"⚠ Falta EPP: {', '.join(missing)}"
                             msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            animal_context = recent_area_context.get("animal")
+                            if animal_context and now - animal_context.get("last_seen", 0.0) <= 10.0:
+                                msg += (
+                                    " | Evento adicional: no autorizado identificado: "
+                                    f"{animal_context['message']}"
+                                )
                             violation_key = _ppe_violation_key(
                                 camera.id,
                                 (px1, py1, px2, py2),
@@ -1879,6 +1990,9 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                 emit_jpeg(buffer.tobytes())
 
     finally:
+        if latest_reader is not None:
+            latest_reader.stop()
+
         cap.release()
 
         _log_line(

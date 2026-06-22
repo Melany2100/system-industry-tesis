@@ -73,6 +73,7 @@ class VisionEventDetector:
         self.sharp_detection_memory = {}
         self.fall_memory = {}
         self.phone_usage_memory = {}
+        self.phone_area_memory = {}
         self._async_lock = Lock()
         self._async_busy = False
         self._latest_events = []
@@ -313,9 +314,14 @@ class VisionEventDetector:
             phone_center = self._box_center(phone_box)
 
             for person in person_boxes:
-                if self._point_inside_box(phone_center, person[:4]):
+                person_box = person[:4]
+                expanded_person_box = self._expand_box(
+                    person_box,
+                    getattr(settings, "PHONE_PERSON_BOX_EXPAND_RATIO", 0.18),
+                )
+
+                if self._point_inside_box(phone_center, expanded_person_box):
                     matched_phone_indexes.add(phone_index)
-                    person_box = person[:4]
                     identity = self._identity_for_box(person_box, identities)
                     person_name = self._identity_name(identity)
                     event_key = self._person_event_key("phone", person_box, identity)
@@ -351,11 +357,18 @@ class VisionEventDetector:
                 continue
 
             phone_box = phone[:4]
+            if phone[4] < getattr(settings, "PHONE_AREA_CONF", 0.65):
+                continue
+
             event_key = self._phone_area_event_key(phone_box)
             observed_phone_keys.add(event_key)
             elapsed = self._track_phone_usage(event_key, now)
+            area_count = self._track_phone_area(event_key, now)
             alert_seconds = getattr(settings, "PHONE_AREA_ALERT_SECONDS", 0)
-            should_alert = elapsed >= alert_seconds
+            should_alert = (
+                elapsed >= alert_seconds
+                and area_count >= getattr(settings, "PHONE_AREA_CONFIRMATION_FRAMES", 2)
+            )
 
             events.append(
                 VisionEvent(
@@ -378,6 +391,7 @@ class VisionEventDetector:
             )
 
         self._prune_phone_usage(observed_phone_keys, now)
+        self._prune_phone_area(observed_phone_keys, now)
         return events
 
     def draw(self, frame, events: List[VisionEvent]):
@@ -446,6 +460,14 @@ class VisionEventDetector:
         px, py = point
         x1, y1, x2, y2 = box
         return x1 <= px <= x2 and y1 <= py <= y2
+
+    def _expand_box(self, box, ratio):
+        x1, y1, x2, y2 = box
+        width = x2 - x1
+        height = y2 - y1
+        pad_x = int(width * ratio)
+        pad_y = int(height * ratio)
+        return x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y
 
     def _sharp_alert_conf(self, label):
         thresholds = getattr(settings, "SHARP_OBJECT_ALERT_CONF", {})
@@ -604,6 +626,23 @@ class VisionEventDetector:
 
             if key not in observed_keys and now - last_seen > ttl_seconds:
                 del self.phone_usage_memory[key]
+
+    def _track_phone_area(self, key, now):
+        entry = self.phone_area_memory.get(key, {"count": 0})
+        entry["count"] += 1
+        entry["last_seen"] = now
+        self.phone_area_memory[key] = entry
+
+        return entry["count"]
+
+    def _prune_phone_area(self, observed_keys, now):
+        ttl_seconds = getattr(settings, "PHONE_TRACK_TTL_SECONDS", 2.5)
+
+        for key in list(self.phone_area_memory.keys()):
+            last_seen = self.phone_area_memory[key].get("last_seen", 0)
+
+            if key not in observed_keys and now - last_seen > ttl_seconds:
+                del self.phone_area_memory[key]
 
     def _max_phone_usage_elapsed(self):
         if not self.phone_usage_memory:

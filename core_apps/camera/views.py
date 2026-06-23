@@ -135,11 +135,11 @@ def _get_event_level(event):
 
 
 def _event_detection_count(event, detection_counts=None):
-    if not event.authorized_person_id:
-        return 0
-
     if detection_counts is not None:
         return detection_counts.get(event.authorized_person_id, 0)
+
+    if not event.authorized_person_id:
+        return SecurityEvent.objects.filter(authorized_person__isnull=True).count()
 
     return SecurityEvent.objects.filter(
         authorized_person_id=event.authorized_person_id
@@ -147,12 +147,19 @@ def _event_detection_count(event, detection_counts=None):
 
 
 def _detection_counts_for_people(person_ids):
+    include_unknown = any(person_id is None for person_id in person_ids)
     person_ids = [person_id for person_id in person_ids if person_id]
+    counts = {}
+
+    if include_unknown:
+        counts[None] = SecurityEvent.objects.filter(
+            authorized_person__isnull=True
+        ).count()
 
     if not person_ids:
-        return {}
+        return counts
 
-    return {
+    counts.update({
         item["authorized_person_id"]: item["total"]
         for item in (
             SecurityEvent.objects
@@ -160,7 +167,9 @@ def _detection_counts_for_people(person_ids):
             .values("authorized_person_id")
             .annotate(total=Count("id"))
         )
-    }
+    })
+
+    return counts
 
 
 def _event_payload(
@@ -382,7 +391,7 @@ DEFAULT_EVENT_LEVELS = {
     "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
     "fall_detected": "CRITICO",
-    "phone_usage": "ALTO",
+    "phone_usage": "MEDIO",
     "collision_risk": "ALTO",
     "cut_risk": "CRITICO",
     "unauthorized_access": "ALTO",
@@ -1512,9 +1521,14 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             if event.confidence is not None
                             else ""
                         )
+                        duration_text = (
+                            f" | tiempo={event.duration_seconds:.1f}s"
+                            if event.duration_seconds is not None
+                            else ""
+                        )
 
                         _log_line(
-                            f"PHONE [{camera_name}]: celular detectado{confidence_text}{person_text}",
+                            f"PHONE [{camera_name}]: celular detectado{confidence_text}{person_text}{duration_text}",
                             key=f"phone_live_{camera.id}_{event.person_name or 'unknown'}",
                             throttle_sec=3.0,
                         )
@@ -1533,12 +1547,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             )
                         elif event.event_type == "phone_usage":
                             log_message = (
-                                f"ALERTA [{camera_name}]: celular no autorizado en el area"
+                                f"ALERTA [{camera_name}]: distraccion por uso de celular"
                                 f"{confidence_text}{person_text}"
                             )
                         elif event.event_type == "fall_detected":
                             log_message = (
-                                f"ALERTA [{camera_name}]: posible caida{person_text}"
+                                f"ALERTA [{camera_name}]: movimiento detectado{person_text}"
                             )
                         else:
                             log_message = (

@@ -28,6 +28,7 @@ class VisionEvent:
     confidence: Optional[float] = None
     person_name: Optional[str] = None
     authorized_person: object = None
+    duration_seconds: Optional[float] = None
 
 
 class VisionEventDetector:
@@ -259,8 +260,8 @@ class VisionEventDetector:
                     VisionEvent(
                         event_type="fall_detected",
                         details=(
-                            f"Posible caida detectada: {person_name} permanece en el piso "
-                            f"o con postura horizontal durante {elapsed:.1f} segundos."
+                            f"Movimiento detectado: {person_name} permanece en el piso "
+                            f"o con postura inclinada durante {elapsed:.1f} segundos."
                         ),
                         category="Evento fisico",
                         severity="CRITICO",
@@ -330,15 +331,16 @@ class VisionEventDetector:
                     alert_seconds = self._phone_alert_seconds(identity)
                     should_alert = elapsed >= alert_seconds
                     details = (
-                        f"Celular detectado con {person_name} durante {elapsed:.1f} segundos."
+                        f"Uso de celular detectado durante {elapsed:.1f} segundos. "
+                        f"Persona asociada: {person_name}."
                     )
 
                     events.append(
                         VisionEvent(
                             event_type="phone_usage",
                             details=details,
-                            category="No autorizado",
-                            severity="ALTO",
+                            category="Distraccion",
+                            severity="MEDIO",
                             should_alert=(
                                 should_alert
                                 and self._can_emit(f"phone_usage:{event_key}")
@@ -348,6 +350,7 @@ class VisionEventDetector:
                             confidence=phone[4],
                             person_name=person_name,
                             authorized_person=self._identity_person(identity),
+                            duration_seconds=elapsed,
                         )
                     )
                     break
@@ -374,11 +377,11 @@ class VisionEventDetector:
                 VisionEvent(
                     event_type="phone_usage",
                     details=(
-                        "Celular detectado en el area monitoreada sin persona "
-                        f"autorizada asociada durante {elapsed:.1f} segundos."
+                        "Uso de celular detectado en el area monitoreada sin persona "
+                        f"identificada asociada durante {elapsed:.1f} segundos."
                     ),
-                    category="No autorizado",
-                    severity="ALTO",
+                    category="Distraccion",
+                    severity="MEDIO",
                     should_alert=(
                         should_alert
                         and self._can_emit(f"phone_usage:{event_key}")
@@ -387,6 +390,7 @@ class VisionEventDetector:
                     object_label="cell_phone",
                     confidence=phone[4],
                     person_name="Persona no identificada",
+                    duration_seconds=elapsed,
                 )
             )
 

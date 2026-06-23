@@ -35,6 +35,8 @@ DEFAULT_EVENT_LEVELS = {
     "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
     "unauthorized_access": "ALTO",
+    "fall_detected": "CRITICO",
+    "phone_usage": "MEDIO",
 }
 RISK_LEVEL_PATTERN = re.compile(
     r"(?:nivel|prioridad)\s*:?\s*(BAJO|BAJA|MEDIO|MEDIA|ALTO|ALTA|CRITICO)",
@@ -235,7 +237,6 @@ def obtener_rango_fechas(periodo):
     Retorna el rango de fechas según el período seleccionado.
     semanal: semana actual
     mensual: mes actual
-    anual: año actual
     """
     ahora = timezone.localtime()
     inicio_hoy = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -247,10 +248,6 @@ def obtener_rango_fechas(periodo):
     elif periodo == "mensual":
         inicio = inicio_hoy.replace(day=1)
         nombre_periodo = "Mensual"
-
-    elif periodo == "anual":
-        inicio = inicio_hoy.replace(month=1, day=1)
-        nombre_periodo = "Anual"
 
     else:
         return None, None, None

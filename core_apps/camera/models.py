@@ -63,8 +63,8 @@ class SecurityEvent(models.Model):
         ('authorized_object', 'Objeto autorizado'),
         ('unauthorized_object', 'Objeto no autorizado'),
         ('dangerous_object', 'Objeto peligroso detectado'),
-        ('fall_detected', 'Posible caida'),
-        ('phone_usage', 'Uso prolongado de celular'),
+        ('fall_detected', 'Movimiento'),
+        ('phone_usage', 'Distraccion'),
         ('collision_risk', 'Riesgo de choque'),
         ('cut_risk', 'Riesgo de corte'),
         ('unauthorized_access', 'Acceso no autorizado'),
@@ -164,7 +164,7 @@ class SecurityEvent(models.Model):
             full_name = self.related_user.get_full_name().strip()
             return full_name if full_name else self.related_user.username
 
-        return "Desconocido"
+        return "Desconocido/a"
 
 
 class Camera(models.Model):

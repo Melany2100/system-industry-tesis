@@ -73,7 +73,7 @@ def send_incident_email(event):
         evidence_text = "Este incidente no dispone de evidencia fotografica."
 
     plain_body = (
-        "ESTIMADO USUARIO, SE HA REGISTRADO UN INCIDENTE LABORAL.\n\n"
+        "ESTIMADO USUARIO {person_name}, SE HA REGISTRADO UN INCIDENTE LABORAL.\n\n"
         f"Persona identificada: {person_name}\n"
         f"Incidente incumplido: {event_name}\n"
         f"Detalle: {event.details}\n"
@@ -92,7 +92,7 @@ def send_incident_email(event):
         )
 
     html_body = f"""
-        <p>ESTIMADO USUARIO, SE HA REGISTRADO UN INCIDENTE LABORAL.</p>
+        <p>ESTIMADO USUARIO {person_name}, SE HA REGISTRADO UN INCIDENTE LABORAL.</p>
         <p><strong>Persona identificada:</strong> {escape(person_name)}</p>
         <p><strong>Incidente incumplido:</strong> {escape(event_name)}</p>
         <p><strong>Detalle:</strong> {escape(event.details)}</p>

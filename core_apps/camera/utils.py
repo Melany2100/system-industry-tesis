@@ -20,11 +20,33 @@ DEFAULT_EVENT_SEVERITIES = {
     "unauthorized_object": "MEDIO",
     "dangerous_object": "ALTO",
     "fall_detected": "CRITICO",
-    "phone_usage": "ALTO",
+    "phone_usage": "MEDIO",
     "collision_risk": "ALTO",
     "cut_risk": "CRITICO",
     "unauthorized_access": "ALTO",
 }
+
+EVENT_REASON_LABELS = {
+    "face_recognized": "Rostro reconocido",
+    "face_unknown": "Acceso no autorizado",
+    "ppe_missing": "Falta EPP",
+    "intrusion": "Intrusion",
+    "authorized_object": "Objeto autorizado",
+    "unauthorized_object": "Objeto no autorizado",
+    "dangerous_object": "Objeto peligroso detectado",
+    "fall_detected": "Movimiento",
+    "phone_usage": "Uso de celular detectado",
+    "collision_risk": "Riesgo de choque",
+    "cut_risk": "Objeto peligroso detectado",
+    "unauthorized_access": "Acceso no autorizado",
+}
+
+FIELD_MARKER_RE = re.compile(
+    r"(?:^|\s*\|\s*)"
+    r"(Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona)"
+    r"\s*:\s*",
+    re.IGNORECASE,
+)
 
 
 try:
@@ -139,6 +161,116 @@ def normalize_event_severity(value, event_type=None, default="MEDIO"):
     return DEFAULT_EVENT_SEVERITIES.get(event_type, default)
 
 
+def _plain_person_name(user=None, authorized_person=None):
+    if authorized_person is not None:
+        return authorized_person.get_full_name() or "Persona autorizada"
+
+    if user is not None:
+        return user.get_full_name().strip() or user.username
+
+    return "Desconocido/a"
+
+
+def _extract_detail_field(text, field):
+    pattern = re.compile(
+        rf"(?:^|\s*\|\s*|\s+)(?:{field})\s*:\s*(.*?)(?=\s*(?:\|\s*)?"
+        r"(?:Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona)\s*:|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(text or "")
+
+    return match.group(1).strip() if match else ""
+
+
+def _remove_detail_metadata(text):
+    cleaned = FIELD_MARKER_RE.sub(" | ", text or "")
+    cleaned = re.sub(
+        r"\b(?:Categoria|Categoría|Nivel|Confianza|Persona)\s*:\s*[^|]+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s*\|\s*", " ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+
+    return cleaned.strip(" .|")
+
+
+def _professionalize_description(reason, description, confidence=None):
+    text = _remove_detail_metadata(description)
+
+    if reason:
+        text = re.sub(
+            rf"^\s*{re.escape(reason)}\s*:\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    replacements = {
+        "gato en el area monitoreada": "Se detecto un gato en el area monitoreada",
+        "animal en el area monitoreada": "Se detecto un animal en el area monitoreada",
+        "perro en el area monitoreada": "Se detecto un perro en el area monitoreada",
+        "ave en el area monitoreada": "Se detecto un ave en el area monitoreada",
+        "celular detectado en el area monitoreada": "Se detecto un celular en el area monitoreada",
+    }
+    lower_text = text.lower()
+
+    for source, replacement in replacements.items():
+        if source in lower_text:
+            text = replacement
+            break
+
+    if text:
+        text = text[0].upper() + text[1:]
+    else:
+        text = f"Se registro el evento: {reason}."
+
+    if not text.endswith("."):
+        text += "."
+
+    if confidence:
+        confidence_match = re.search(r"\d+(?:\.\d+)?", confidence)
+        confidence_value = confidence_match.group(0) if confidence_match else confidence
+        text += f" Confianza: {confidence_value}."
+
+    return text
+
+
+def format_security_event_details(event_type, details, user=None, authorized_person=None):
+    text = str(details or "").strip()
+
+    event_labels = dict(SecurityEvent.EVENT_TYPES)
+    category = event_labels.get(event_type, event_type)
+    reason = _extract_detail_field(text, "Motivo") or EVENT_REASON_LABELS.get(event_type, category)
+    description = _extract_detail_field(text, "Descripcion|Descripción") or text
+    confidence = _extract_detail_field(text, "Confianza")
+
+    if event_type == "ppe_missing" and "Indumentaria incorrecta" in description:
+        reason = "Indumentaria incorrecta"
+
+    person = _plain_person_name(user=user, authorized_person=authorized_person)
+    parsed_person = _extract_detail_field(text, "Persona")
+
+    if person == "Desconocido/a" and parsed_person:
+        person = parsed_person
+
+    if person.strip().lower() in {"persona no identificada", "no identificado", "desconocido"}:
+        person = "Desconocido/a"
+    formatted_description = _professionalize_description(
+        reason,
+        description,
+        confidence=confidence,
+    )
+
+    return (
+        f"Motivo: {reason}\n"
+        f"Descripcion: {formatted_description}\n"
+        f"Categoria: {category}\n"
+        f"Persona: {person}"
+    )
+
+
 def create_security_event(
     event_type,
     details,
@@ -164,23 +296,25 @@ def create_security_event(
         else:
             camera_name = "Cámara no especificada"
 
+        formatted_details = format_security_event_details(
+            event_type,
+            details,
+            user=user,
+            authorized_person=authorized_person,
+        )
+
         with transaction.atomic():
             event = SecurityEvent.objects.create(
                 event_type=event_type,
                 severity=normalize_event_severity(severity, event_type),
-                details=details,
+                details=formatted_details,
                 image_path=image_path,
                 related_user=user,
                 authorized_person=authorized_person,
                 camera=camera
             )
 
-            if authorized_person is not None:
-                persona = authorized_person.get_full_name()
-            elif user:
-                persona = user.get_full_name().strip() or user.username
-            else:
-                persona = "Desconocido"
+            persona = _plain_person_name(user=user, authorized_person=authorized_person)
 
             if epp_correcto is None:
                 epp_correcto = False
@@ -190,7 +324,7 @@ def create_security_event(
                 camara=camera_name,
                 persona_detectada=persona,
                 epp_correcto=epp_correcto,
-                descripcion=f"{event.get_event_type_display()}: {details}",
+                descripcion=f"{event.get_event_type_display()}: {formatted_details}",
                 evidencia=image_path
             )
             transaction.on_commit(lambda: notify_incident_by_email(event.pk))

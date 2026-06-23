@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 
+from django.conf import settings
 from django.views.generic import TemplateView
 from django.shortcuts import render
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -16,7 +18,7 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from datetime import timedelta
 
-from core_apps.camera.models import SecurityEvent, AuthorizedPerson
+from core_apps.camera.models import SecurityEvent, AuthorizedPerson, Camera
 from core_apps.common.models import UserSetting
 from core_apps.common.permissions import (
     can_manage_users,
@@ -34,6 +36,47 @@ SYSTEM_ROLE_GROUPS = {
     "operador": "Operador",
     "jefe": "Jefe",
 }
+
+
+def _activate_cameras_for_admin(user):
+    if not is_admin_user(user):
+        return 0
+
+    Camera.objects.filter(is_active=False).update(is_active=True)
+    return Camera.objects.filter(is_active=True).count()
+
+
+def _ai_model_status():
+    model_paths = [
+        getattr(settings, "RISK_YOLO_MODEL_PATH", None),
+        getattr(settings, "YOLO_OBJECT_MODEL_PATH", None),
+        getattr(settings, "YOLO_POSE_MODEL_PATH", None),
+        getattr(settings, "YOLO_FAST_MODEL_PATH", None),
+        getattr(settings, "PPE_MODEL_PATH", None),
+    ]
+    base_dir = getattr(settings, "BASE_DIR", None)
+
+    if base_dir:
+        model_paths.append(Path(base_dir) / "camera" / "ppe.pt")
+
+    existing = [path for path in model_paths if path and Path(path).exists()]
+
+    if not existing:
+        return {
+            "label": "No disponible",
+            "class": "text-danger",
+        }
+
+    if len(existing) < 3:
+        return {
+            "label": "Parcial",
+            "class": "text-warning",
+        }
+
+    return {
+        "label": "Activo",
+        "class": "text-success",
+    }
 
 
 def _ensure_system_groups():
@@ -264,6 +307,8 @@ class IndexView(LoginRequiredMixin, TemplateView):
 
             return redirect("dashboard")
 
+        _activate_cameras_for_admin(request.user)
+
         return super().dispatch(request, *args, **kwargs)
 
 
@@ -278,6 +323,9 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         now = timezone.localtime()
         events_qs = SecurityEvent.objects.all()
         reports_qs = Informe.objects.all()
+        active_cameras = _activate_cameras_for_admin(self.request.user)
+        total_cameras = Camera.objects.count()
+        ai_model_status = _ai_model_status()
 
         if not is_admin_user(self.request.user):
             authorized_person = get_authorized_person_for_user(self.request.user)
@@ -429,6 +477,8 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'unauthorized_access',
             'intrusion',
             'ppe_missing',
+            'fall_detected',
+            'phone_usage',
         ]
         event_breakdown = []
 
@@ -501,6 +551,12 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'event_labels': event_labels,
             'event_values': event_values,
             'event_breakdown': event_breakdown,
+            'active_cameras': active_cameras,
+            'total_cameras': total_cameras,
+            'camera_status_label': 'En linea' if active_cameras else 'Sin camaras activas',
+            'camera_status_class': 'text-success' if active_cameras else 'text-danger',
+            'ai_model_status_label': ai_model_status["label"],
+            'ai_model_status_class': ai_model_status["class"],
         })
 
         return context

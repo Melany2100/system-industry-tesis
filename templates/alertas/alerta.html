@@ -90,7 +90,9 @@
             <option value="intrusion">Intrusion</option>
             <option value="authorized_object">Objeto autorizado</option>
             <option value="unauthorized_object">Objeto no autorizado</option>
-            <option value="dangerous_object">Objeto peligroso</option>
+            <option value="dangerous_object">Objeto peligroso detectado</option>
+            <option value="fall_detected">Movimiento</option>
+            <option value="phone_usage">Distraccion</option>
             <option value="unauthorized_access">Acceso no autorizado</option>
           </select>
         </label>
@@ -121,9 +123,8 @@
               </th>
               <th>Tipo de alerta</th>
               <th>Descripción</th>
-              <th>Identificado</th>
-              <th>Detecciones</th>
-              <th>Usuario</th>
+              <th>Persona Identificada</th>
+              <th>Total de Detecciones</th>
               <th>Fecha/Hora</th>
               <th>Prioridad</th>
               <th>Estado</th>
@@ -134,7 +135,7 @@
 
           <tbody id="alertsContainer">
             <tr>
-              <td colspan="11">
+              <td colspan="10">
                 <div class="alerts-loading">
                   <div class="spinner-border text-primary" role="status">
                     <span class="visually-hidden">Cargando...</span>
@@ -284,6 +285,16 @@ document.addEventListener("DOMContentLoaded", function () {
         text: "ALTO",
         icon: "fa-shield-halved"
       },
+      fall_detected: {
+        className: "critical",
+        text: "CRITICO",
+        icon: "fa-person-falling"
+      },
+      phone_usage: {
+        className: "warning",
+        text: "MEDIO",
+        icon: "fa-mobile-screen-button"
+      },
       critical: {
         className: "critical",
         text: "CRITICO",
@@ -298,7 +309,7 @@ document.addEventListener("DOMContentLoaded", function () {
     types: {
       face_recognized: {
         icon: "fa-user-check",
-        label: "Rostro autorizado"
+        label: "Rostro reconocido"
       },
       face_unknown: {
         icon: "fa-user-xmark",
@@ -322,11 +333,19 @@ document.addEventListener("DOMContentLoaded", function () {
       },
       dangerous_object: {
         icon: "fa-triangle-exclamation",
-        label: "Objeto peligroso"
+        label: "Objeto peligroso detectado"
       },
       unauthorized_access: {
         icon: "fa-shield-halved",
         label: "Acceso no autorizado"
+      },
+      fall_detected: {
+        icon: "fa-person-falling",
+        label: "Movimiento"
+      },
+      phone_usage: {
+        icon: "fa-mobile-screen-button",
+        label: "Distraccion"
       },
       default: {
         icon: "fa-bell",
@@ -671,10 +690,6 @@ document.addEventListener("DOMContentLoaded", function () {
           </td>
 
           <td>
-            <span class="alert-user">${escapeHtml(event.user || "Sistema")}</span>
-          </td>
-
-          <td>
             <span class="alert-date">${escapeHtml(event.timestamp || "")}</span>
           </td>
 
@@ -855,17 +870,12 @@ document.addEventListener("DOMContentLoaded", function () {
       </div>
 
       <div class="info-line">
-        <span>Usuario</span>
-        <strong>${escapeHtml(alert.user || "Sistema")}</strong>
-      </div>
-
-      <div class="info-line">
-        <span>Identificado</span>
+        <span>Persona Identificada</span>
         <strong>${escapeHtml(alert.identified_person || "No identificado")}</strong>
       </div>
 
       <div class="info-line">
-        <span>Detecciones</span>
+        <span>Total de Detecciones</span>
         <strong>${Number(alert.detection_count || 0)}</strong>
       </div>
 

@@ -59,14 +59,16 @@ document.addEventListener("DOMContentLoaded", function () {
   let isFirstLoad = true;
 
   const typeMeta = {
-    face_recognized: { icon: "bi-person-check", label: "Rostro autorizado" },
+    face_recognized: { icon: "bi-person-check", label: "Rostro reconocido" },
     face_unknown: { icon: "bi-person-x", label: "Rostro desconocido" },
     ppe_missing: { icon: "bi-cone-striped", label: "Falta de EPP" },
     intrusion: { icon: "bi-door-open", label: "Intrusion" },
     authorized_object: { icon: "bi-check-circle", label: "Objeto autorizado" },
     unauthorized_object: { icon: "bi-slash-circle", label: "Objeto no autorizado" },
-    dangerous_object: { icon: "bi-exclamation-triangle", label: "Objeto peligroso" },
+    dangerous_object: { icon: "bi-exclamation-triangle", label: "Objeto peligroso detectado" },
     unauthorized_access: { icon: "bi-shield-exclamation", label: "Acceso no autorizado" },
+    fall_detected: { icon: "bi-activity", label: "Movimiento" },
+    phone_usage: { icon: "bi-phone", label: "Distraccion" },
     default: { icon: "bi-bell", label: "Evento" }
   };
 

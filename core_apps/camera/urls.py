@@ -20,4 +20,6 @@ urlpatterns = [
     path("security-events/<int:event_id>/resolve/", mark_event_as_resolved, name="mark_event_resolved"),
 
     path("status/<int:camera_id>/", views.camera_status, name="camera_status"),
+
+    path("api/cameras/push-frame/", views.push_camera_frame, name="push_camera_frame"),
 ]

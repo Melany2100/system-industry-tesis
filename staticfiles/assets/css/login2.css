@@ -1,0 +1,349 @@
+:root {
+  --azul-oscuro: #133C55;
+  --azul-medio: #386FA4;
+  --azul-claro: #59A5D8;
+  --celeste: #84D2F6;
+  --celeste-suave: #91E5F6;
+
+  --texto-principal: #133C55;
+  --texto-secundario: #5f7487;
+  --blanco: #ffffff;
+  --gris-fondo: #f4f8fb;
+  --sombra: 0 20px 50px rgba(19, 60, 85, 0.18);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.login-page {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #eef7fb 0%, #f8fcff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.login-container {
+  width: 100%;
+  max-width: 1120px;
+  min-height: 650px;
+  background: var(--blanco);
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: var(--sombra);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+/* =========================
+   LADO IZQUIERDO
+========================= */
+.login-left {
+  position: relative;
+  background: linear-gradient(180deg, var(--azul-claro) 0%, #2eaed0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  overflow: hidden;
+}
+
+.login-left::before,
+.login-left::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  z-index: 1;
+}
+
+.login-left::before {
+  width: 520px;
+  height: 520px;
+  background: rgba(255, 255, 255, 0.12);
+  top: -180px;
+  left: -120px;
+}
+
+.login-left::after {
+  width: 420px;
+  height: 420px;
+  background: rgba(19, 60, 85, 0.14);
+  bottom: -160px;
+  left: -60px;
+}
+
+.login-left__overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(255,255,255,0.20), transparent 30%),
+    radial-gradient(circle at bottom left, rgba(19,60,85,0.18), transparent 35%);
+  z-index: 1;
+}
+
+.login-left__content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  max-width: 360px;
+  color: var(--blanco);
+}
+
+.login-logo-box {
+  width: 180px;
+  height: 180px;
+  margin: 0 auto 24px;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  box-shadow: 0 18px 40px rgba(19, 60, 85, 0.15);
+}
+
+.login-logo {
+  width: 100%;
+  max-width: 130px;
+  height: auto;
+  object-fit: contain;
+}
+
+.login-brand-title {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 14px;
+}
+
+.login-brand-text {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.92);
+}
+
+/* =========================
+   LADO DERECHO
+========================= */
+.login-right {
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 38px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 430px;
+}
+
+.login-badge {
+  display: inline-block;
+  background: rgba(89, 165, 216, 0.15);
+  color: var(--azul-medio);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+
+.login-title {
+  color: var(--texto-principal);
+  font-size: 2.1rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.login-subtitle {
+  color: var(--texto-secundario);
+  font-size: 0.98rem;
+  margin-bottom: 28px;
+}
+
+.login-alert {
+  background: rgba(255, 99, 99, 0.10);
+  color: #b42318;
+  border: 1px solid rgba(180, 35, 24, 0.18);
+  padding: 12px 14px;
+  border-radius: 14px;
+  margin-bottom: 18px;
+  font-size: 0.95rem;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.input-group-custom {
+  width: 100%;
+  height: 58px;
+  background: #f5fbff;
+  border: 1.5px solid #d9edf7;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  transition: all 0.25s ease;
+}
+
+.input-group-custom:focus-within {
+  border-color: var(--azul-claro);
+  box-shadow: 0 0 0 4px rgba(89, 165, 216, 0.14);
+  background: #ffffff;
+}
+
+.input-icon {
+  color: var(--azul-medio);
+  font-size: 1.05rem;
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.input-custom {
+  border: none;
+  outline: none;
+  background: transparent;
+  width: 100%;
+  font-size: 0.98rem;
+  color: var(--texto-principal);
+}
+
+.input-custom::placeholder {
+  color: #8aa3b7;
+}
+
+.login-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -2px;
+  margin-bottom: 4px;
+}
+
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texto-secundario);
+  font-size: 0.94rem;
+}
+
+.remember-me input {
+  accent-color: var(--azul-medio);
+}
+
+.forgot-link {
+  color: var(--azul-medio);
+  text-decoration: none;
+  font-size: 0.93rem;
+  font-weight: 600;
+}
+
+.forgot-link:hover {
+  color: var(--azul-oscuro);
+}
+
+.login-btn {
+  width: 100%;
+  height: 56px;
+  border: none;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--azul-medio), var(--celeste));
+  color: white;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 14px 30px rgba(56, 111, 164, 0.28);
+}
+
+.login-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px rgba(56, 111, 164, 0.34);
+}
+
+.signup-text {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--texto-secundario);
+  font-size: 0.96rem;
+}
+
+.signup-text a {
+  color: var(--azul-medio);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.signup-text a:hover {
+  color: var(--azul-oscuro);
+}
+
+/* =========================
+   RESPONSIVE
+========================= */
+@media (max-width: 991px) {
+  .login-container {
+    grid-template-columns: 1fr;
+    max-width: 620px;
+  }
+
+  .login-left {
+    min-height: 320px;
+    padding: 36px 24px;
+  }
+
+  .login-logo-box {
+    width: 140px;
+    height: 140px;
+    margin-bottom: 18px;
+  }
+
+  .login-brand-title {
+    font-size: 1.7rem;
+  }
+
+  .login-right {
+    padding: 34px 22px;
+  }
+}
+
+@media (max-width: 576px) {
+  .login-page {
+    padding: 18px 10px;
+  }
+
+  .login-container {
+    border-radius: 22px;
+  }
+
+  .login-left {
+    min-height: 280px;
+  }
+
+  .login-title {
+    font-size: 1.7rem;
+  }
+
+  .login-options {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .login-btn {
+    height: 54px;
+  }
+}

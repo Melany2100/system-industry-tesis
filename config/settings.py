@@ -10,28 +10,33 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 import os
-
-from pathlib import Path
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / ".env")
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
-
-
-# Quick-start development settings - unsuitable for production
+#Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-s$@!m4upd8*=jnolgj&(5tu7l$51ku_w%z84rr3q2lv06r%(si'
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+       host.strip()
+       for host in os.getenv("ALLOWED_HOSTS","").split(",")
+       if host.strip()
+        ]
+
+CSRF_TRUSTED_ORIGINS = [
+        origin.strip()
+        for origin in os.getenv("CSRF_TRUSTED_ORIGINS","").split(",")
+        if origin.strip()
+        ]
 
 # Application definition
 
@@ -80,13 +85,13 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'smri_test',
-        'USER': 'adm_monitor',
-        'PASSWORD': 'password.1',
-        'HOST': 'localhost',
-        'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
 
@@ -137,9 +142,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+STATIC_URL = os.getenv("STATIC_URL", "/static/")
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -153,29 +161,32 @@ CHANNEL_LAYERS = {
 }
 
 # Configuración de seguridad para desarrollo
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
-SECURE_SSL_REDIRECT = False
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "False").lower() == "true"
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "False").lower() == "true"
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() == "true"
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
+MEDIA_ROOT = BASE_DIR / "media"
 
-# Correo de incidentes. En produccion configure estas variables en el entorno.
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'
+
+
 EMAIL_BACKEND = os.getenv(
-    'EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend',
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
 )
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
-EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
-EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').lower() == 'true'
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.getenv(
-    'DEFAULT_FROM_EMAIL',
-    EMAIL_HOST_USER or 'no-reply@smri.local',
+    "DEFAULT_FROM_EMAIL",
+    EMAIL_HOST_USER or "no-reply@smri.local",
 )
-EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 # YOLO - objetos de riesgo con modelo preentrenado COCO.
 RISK_YOLO_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
@@ -193,76 +204,5 @@ RISK_YOLO_ALERT_CONF = {
     "bottle": 0.35,
 }
 
-FACE_RECOGNITION_FRAME_INTERVAL = 8
-FACE_DETECTION_FRAME_INTERVAL = 8
-FACE_ANALYSIS_WIDTH = 640
-FACE_RECOGNITION_TOLERANCE = 0.65
-FACE_UNAUTHORIZED_CONFIRMATION_FRAMES = 3
-FACE_UNAUTHORIZED_DISPLAY_FRAMES = 2
-FACE_AUTH_MEMORY_SECONDS = 10.0
-FACE_MIN_BOX_WIDTH_RATIO = 0.020
-FACE_MIN_BOX_HEIGHT_RATIO = 0.030
-PPE_FRAME_INTERVAL = 15
-PPE_INFERENCE_IMGSZ = 1280
-PPE_MODEL_CONFIDENCE = 0.20
-PPE_PERSON_CONFIDENCE = 0.40
-PPE_MASK_CONFIDENCE = 0.30
-PPE_NO_MASK_CONFIDENCE = 0.50
-
-# Camara RTSP por defecto para pruebas directas fuera del modelo Camera.
-RTSP_CAMERA_URL = os.getenv(
-    "RTSP_CAMERA_URL",
-    "rtsp://admin:TU_PASSWORD@192.168.10.198:554/stream1",
-)
-RTSP_CAMERA_URL_FAST = os.getenv(
-    "RTSP_CAMERA_URL_FAST",
-    "rtsp://admin:TU_PASSWORD@192.168.10.198:554/stream2",
-)
-
-# Detector visual general: objetos cortopunzantes, caidas y uso de celular.
-YOLO_OBJECT_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
-YOLO_POSE_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s-pose.pt"
-YOLO_FAST_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
-
-SHARP_OBJECT_CONF = 0.18
-SHARP_OBJECT_IMGSZ = 1280
-SHARP_OBJECT_CLASSES = [43, 76]
-SHARP_OBJECT_ALERT_CONF = {
-    "knife": 0.20,
-    "scissors": 0.25,
-}
-SHARP_OBJECT_CONFIRMATION_FRAMES = 1
-SHARP_OBJECT_TTL_SECONDS = 2.0
-
-POSE_CONF = 0.35
-POSE_IMGSZ = 640
-POSE_KEYPOINT_CONF = 0.25
-FALL_SECONDS = 3.0
-FALL_ASPECT_RATIO = 1.70
-FALL_TORSO_ANGLE = 68
-FALL_MIN_BOX_AREA_RATIO = 0.08
-FALL_MIN_WIDTH_RATIO = 0.28
-FALL_TRACK_TTL_SECONDS = 4.0
-
-PHONE_CONF = 0.30
-PHONE_IMGSZ = 960
-PHONE_ALERT_SECONDS = 10
-PHONE_UNIDENTIFIED_ALERT_SECONDS = 0
-PHONE_UNAUTHORIZED_ALERT_SECONDS = 0
-PHONE_AREA_ALERT_SECONDS = 0
-PHONE_AREA_CONF = 0.65
-PHONE_AREA_CONFIRMATION_FRAMES = 2
-PHONE_TRACK_TTL_SECONDS = 8.0
-PHONE_PERSON_BOX_EXPAND_RATIO = 0.18
-PHONE_CLASSES = [0, 67]
-
-DETECT_SHARP_EVERY_N_FRAMES = 2
-DETECT_POSE_EVERY_N_FRAMES = 25
-DETECT_PHONE_EVERY_N_FRAMES = 1
-EVENT_COOLDOWN_SECONDS = 10
-RTSP_INITIAL_FRAME_TIMEOUT_SECONDS = 15
-RTSP_STALE_FRAME_SECONDS = 8
-
-LOGIN_REDIRECT_URL = '/'
-LOGOUT_REDIRECT_URL = '/login/'
-
+ENABLE_LOCAL_DETECTION = os.getenv("ENABLE_LOCAL_DETECTION", "false").lower() == "true"
+AGENT_SHARED_SECRET = os.getenv("AGENT_SHARED_SECRET", "")

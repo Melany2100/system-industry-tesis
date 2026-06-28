@@ -1,0 +1,46 @@
+/* ================================
+   THEME GLOBAL - SMRI
+================================ */
+
+:root {
+  /* Paleta principal */
+  --color-dark: #133C55;
+  --color-primary: #386FA4;
+  --color-secondary: #59A5D8;
+  --color-soft: #84D2F6;
+  --color-light: #91E5F6;
+
+  /* Versiones RGB para transparencias */
+  --color-dark-rgb: 19, 60, 85;
+  --color-primary-rgb: 56, 111, 164;
+  --color-secondary-rgb: 89, 165, 216;
+  --color-soft-rgb: 132, 210, 246;
+  --color-light-rgb: 145, 229, 246;
+
+  /* Colores semánticos */
+  --color-bg: #f6f9fc;
+  --color-surface: #ffffff;
+  --color-text: #133C55;
+  --color-text-muted: #7b8a95;
+  --color-border: rgba(19, 60, 85, 0.10);
+
+  /* Estados */
+  --color-hover-bg: rgba(var(--color-light-rgb), 0.28);
+  --color-active-bg: rgba(var(--color-light-rgb), 0.42);
+  --color-active-text: var(--color-dark);
+
+  /* Sombras */
+  --shadow-soft: 0 20px 45px rgba(var(--color-dark-rgb), 0.10);
+  --shadow-card: 0 14px 30px rgba(var(--color-dark-rgb), 0.08);
+
+  /* Bordes */
+  --radius-sm: 0.75rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.5rem;
+  --radius-xl: 2rem;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}

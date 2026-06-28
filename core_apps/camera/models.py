@@ -82,6 +82,8 @@ class SecurityEvent(models.Model):
     image_path = models.CharField(max_length=500, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     resolved = models.BooleanField(default=False)
+    object_label = models.CharField(max_length=100, blank=True, null=True)
+    should_alert = models.BooleanField(default=True)
     email_status = models.CharField(
         max_length=10,
         choices=EMAIL_STATUS_CHOICES,
@@ -172,6 +174,9 @@ class Camera(models.Model):
     source = models.CharField(max_length=500)
     ubicacion = models.CharField(max_length=200, blank=True, null=True)
     is_active = models.BooleanField(default=True)
+
+    api_token = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Cámara'

@@ -1,0 +1,14 @@
+.login-card {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.login-card .form-control {
+  height: 48px;
+}
+
+.form-label {
+  font-weight: 600;
+  color: #344767;
+  margin-bottom: 8px;
+}

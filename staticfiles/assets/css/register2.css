@@ -1,0 +1,694 @@
+:root {
+  --azul-oscuro: #133C55;
+  --azul-medio: #386FA4;
+  --azul-claro: #59A5D8;
+  --celeste: #84D2F6;
+  --celeste-suave: #91E5F6;
+
+  --texto-principal: #133C55;
+  --texto-secundario: #5f7487;
+  --blanco: #ffffff;
+  --gris-fondo: #f4f8fb;
+  --sombra: 0 20px 50px rgba(19, 60, 85, 0.18);
+  --error: #b42318;
+  --success: #16a34a;
+  --border-soft: #d9edf7;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  min-height: 100%;
+}
+
+body.auth-page-body {
+  margin: 0;
+}
+
+.register-page {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #eef7fb 0%, #f8fcff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.register-container {
+  width: 100%;
+  max-width: 1120px;
+  min-height: 650px;
+  background: var(--blanco);
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: var(--sombra);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+/* LADO IZQUIERDO */
+.register-left {
+  position: relative;
+  background: linear-gradient(180deg, var(--azul-claro) 0%, #2eaed0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  overflow: hidden;
+}
+
+.register-left::before,
+.register-left::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  z-index: 1;
+}
+
+.register-left::before {
+  width: 520px;
+  height: 520px;
+  background: rgba(255, 255, 255, 0.12);
+  top: -180px;
+  left: -120px;
+}
+
+.register-left::after {
+  width: 420px;
+  height: 420px;
+  background: rgba(19, 60, 85, 0.14);
+  bottom: -160px;
+  left: -60px;
+}
+
+.register-left__overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(255,255,255,0.20), transparent 30%),
+    radial-gradient(circle at bottom left, rgba(19,60,85,0.18), transparent 35%);
+  z-index: 1;
+}
+
+.register-left__content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  max-width: 360px;
+  color: var(--blanco);
+}
+
+.register-logo-box {
+  width: 180px;
+  height: 180px;
+  margin: 0 auto 24px;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  box-shadow: 0 18px 40px rgba(19, 60, 85, 0.15);
+}
+
+.register-logo {
+  width: 100%;
+  max-width: 130px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.register-brand-title {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 14px;
+}
+
+.register-brand-text {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.92);
+}
+
+/* LADO DERECHO */
+.register-right {
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 38px;
+}
+
+.register-card {
+  width: 100%;
+  max-width: 430px;
+}
+
+.register-badge {
+  display: inline-block;
+  background: rgba(89, 165, 216, 0.15);
+  color: var(--azul-medio);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+
+.register-title {
+  color: var(--texto-principal);
+  font-size: 2.1rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.register-subtitle {
+  color: var(--texto-secundario);
+  font-size: 0.98rem;
+  margin-bottom: 28px;
+}
+
+.register-alert {
+  background: rgba(255, 99, 99, 0.10);
+  color: var(--error);
+  border: 1px solid rgba(180, 35, 24, 0.18);
+  padding: 12px 14px;
+  border-radius: 14px;
+  margin-bottom: 18px;
+  font-size: 0.95rem;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.input-group-custom {
+  width: 100%;
+  height: 58px;
+  background: #f5fbff;
+  border: 1.5px solid #d9edf7;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  transition: all 0.25s ease;
+  position: relative;
+}
+
+.input-group-custom:focus-within {
+  border-color: var(--azul-claro);
+  box-shadow: 0 0 0 4px rgba(89, 165, 216, 0.14);
+  background: #ffffff;
+}
+
+.input-icon {
+  color: var(--azul-medio);
+  font-size: 1.05rem;
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.input-custom,
+.input-group-custom input {
+  width: 100%;
+  height: 100%;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 0.98rem;
+  color: var(--texto-principal);
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.input-custom::placeholder,
+.input-group-custom input::placeholder {
+  color: #8aa3b7;
+}
+
+.password-group .input-custom,
+.password-group input {
+  padding-right: 42px;
+}
+
+.toggle-password {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  z-index: 2;
+  font-size: 1rem;
+  padding: 0;
+}
+
+.field-error {
+  margin-top: -8px;
+  color: var(--error);
+  font-size: 0.88rem;
+}
+
+.field-error ul {
+  padding-left: 18px;
+  margin-bottom: 0;
+}
+
+.password-rules {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.compact-rules {
+  margin-top: -4px;
+  margin-bottom: 2px;
+}
+
+.rule-item {
+  font-size: 0.88rem;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.rule-item:last-child {
+  margin-bottom: 0;
+}
+
+.terms-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 2px 0 4px 0;
+  font-size: 0.93rem;
+  color: var(--texto-secundario);
+}
+
+.custom-check {
+  margin-top: 4px;
+  accent-color: var(--azul-medio);
+}
+
+.terms-box a {
+  color: var(--azul-medio);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.terms-box a:hover {
+  text-decoration: underline;
+}
+
+.register-btn {
+  width: 100%;
+  height: 56px;
+  border: none;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--azul-medio), var(--celeste));
+  color: white;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 14px 30px rgba(56, 111, 164, 0.28);
+}
+
+.register-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px rgba(56, 111, 164, 0.34);
+}
+
+.register-btn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.register-footer-text {
+  margin-top: 8px;
+  text-align: center;
+  color: var(--texto-secundario);
+  font-size: 0.96rem;
+}
+
+.register-footer-text a {
+  color: var(--azul-medio);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.register-footer-text a:hover {
+  color: var(--azul-oscuro);
+}
+
+.success-box {
+  text-align: center;
+  padding: 20px 10px;
+}
+
+.success-box i {
+  font-size: 3rem;
+  color: var(--success);
+  margin-bottom: 15px;
+}
+
+.success-box h3 {
+  color: var(--texto-principal);
+  margin-bottom: 10px;
+}
+
+.success-box p {
+  color: var(--texto-secundario);
+  margin-bottom: 20px;
+}
+
+.btn-login-redirect {
+  display: inline-block;
+  padding: 12px 22px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--azul-medio), var(--celeste));
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.btn-login-redirect:hover {
+  color: #fff;
+  text-decoration: none;
+  opacity: 0.95;
+}
+
+.register-card,
+.register-form,
+.input-group-custom,
+.password-rules,
+.terms-box,
+.register-alert {
+  width: 100%;
+}
+
+.register-right,
+.register-card {
+  min-width: 0;
+}
+
+/* RESPONSIVE */
+@media (max-width: 1200px) {
+  .register-container {
+    max-width: 980px;
+    min-height: 620px;
+    grid-template-columns: 0.95fr 1.05fr;
+  }
+
+  .register-left,
+  .register-right {
+    padding: 36px 28px;
+  }
+
+  .register-logo-box {
+    width: 150px;
+    height: 150px;
+    padding: 14px;
+  }
+
+  .register-logo {
+    max-width: 105px;
+  }
+
+  .register-brand-title {
+    font-size: 1.8rem;
+  }
+
+  .register-brand-text {
+    font-size: 0.95rem;
+  }
+
+  .register-title {
+    font-size: 1.9rem;
+  }
+}
+
+@media (max-width: 991px) {
+  .register-page {
+    padding: 20px 14px;
+  }
+
+  .register-container {
+    grid-template-columns: 1fr;
+    max-width: 680px;
+    min-height: auto;
+    border-radius: 24px;
+  }
+
+  .register-left {
+    min-height: 300px;
+    padding: 30px 22px;
+  }
+
+  .register-left::before {
+    width: 360px;
+    height: 360px;
+    top: -120px;
+    left: -80px;
+  }
+
+  .register-left::after {
+    width: 280px;
+    height: 280px;
+    bottom: -120px;
+    left: -40px;
+  }
+
+  .register-left__content {
+    max-width: 320px;
+  }
+
+  .register-logo-box {
+    width: 130px;
+    height: 130px;
+    margin-bottom: 16px;
+    border-radius: 22px;
+  }
+
+  .register-logo {
+    max-width: 92px;
+  }
+
+  .register-brand-title {
+    font-size: 1.55rem;
+    margin-bottom: 10px;
+  }
+
+  .register-brand-text {
+    font-size: 0.94rem;
+    line-height: 1.6;
+  }
+
+  .register-right {
+    padding: 30px 22px;
+  }
+
+  .register-card {
+    max-width: 100%;
+  }
+
+  .register-title {
+    font-size: 1.7rem;
+  }
+
+  .register-subtitle {
+    font-size: 0.95rem;
+    margin-bottom: 22px;
+  }
+}
+
+@media (max-width: 768px) {
+  .register-page {
+    padding: 14px 10px;
+  }
+
+  .register-container {
+    border-radius: 20px;
+  }
+
+  .register-left {
+    min-height: 250px;
+    padding: 24px 18px;
+  }
+
+  .register-left__content {
+    max-width: 280px;
+  }
+
+  .register-logo-box {
+    width: 110px;
+    height: 110px;
+    padding: 12px;
+  }
+
+  .register-logo {
+    max-width: 78px;
+  }
+
+  .register-brand-title {
+    font-size: 1.35rem;
+  }
+
+  .register-brand-text {
+    font-size: 0.9rem;
+  }
+
+  .register-right {
+    padding: 24px 18px;
+  }
+
+  .register-badge {
+    font-size: 0.82rem;
+    padding: 7px 14px;
+    margin-bottom: 14px;
+  }
+
+  .register-title {
+    font-size: 1.5rem;
+  }
+
+  .register-subtitle {
+    font-size: 0.92rem;
+    margin-bottom: 20px;
+  }
+
+  .input-group-custom {
+    height: 54px;
+    border-radius: 16px;
+    padding: 0 14px;
+  }
+
+  .register-btn {
+    height: 54px;
+    border-radius: 16px;
+  }
+
+  .password-rules {
+    padding: 10px 12px;
+  }
+
+  .rule-item {
+    font-size: 0.84rem;
+  }
+
+  .terms-box {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 576px) {
+  .register-page {
+    padding: 10px 8px;
+  }
+
+  .register-container {
+    border-radius: 18px;
+  }
+
+  .register-left {
+    min-height: 220px;
+    padding: 22px 16px;
+  }
+
+  .register-left::before {
+    width: 260px;
+    height: 260px;
+    top: -90px;
+    left: -70px;
+  }
+
+  .register-left::after {
+    width: 220px;
+    height: 220px;
+    bottom: -100px;
+    left: -40px;
+  }
+
+  .register-logo-box {
+    width: 96px;
+    height: 96px;
+    border-radius: 18px;
+    margin-bottom: 12px;
+  }
+
+  .register-logo {
+    max-width: 66px;
+  }
+
+  .register-brand-title {
+    font-size: 1.2rem;
+  }
+
+  .register-brand-text {
+    font-size: 0.85rem;
+  }
+
+  .register-right {
+    padding: 20px 14px;
+  }
+
+  .register-title {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+
+  .register-subtitle {
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .input-group-custom {
+    height: 52px;
+    border-radius: 15px;
+  }
+
+  .input-icon {
+    font-size: 0.95rem;
+    margin-right: 10px;
+  }
+
+  .input-custom,
+  .input-group-custom input {
+    font-size: 0.94rem;
+  }
+
+  .register-btn {
+    height: 52px;
+    font-size: 0.96rem;
+  }
+
+  .register-footer-text {
+    font-size: 0.9rem;
+  }
+
+  .terms-box {
+    gap: 8px;
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+}

@@ -181,7 +181,7 @@ class Camera(models.Model):
         return str(self.source).startswith("push://")
 
 
-    api_token = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    api_token = models.CharField(max_length=150, unique=True, null=True, blank=True)
     last_seen = models.DateTimeField(null=True, blank=True)
 
     class Meta:

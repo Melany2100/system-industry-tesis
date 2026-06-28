@@ -2,6 +2,9 @@ from core_apps import camera
 from core_apps.camera.utils import cv2
 
 import os
+import hmac
+import cv2
+import numpy as np
 import json
 import re
 import time
@@ -2219,29 +2222,40 @@ def _get_request_fps(request):
         return int(request.GET.get("fps", "5"))
     except ValueError:
         return 5
+    
+def _is_push_camera(camera: Camera) -> bool:
+    return str(camera.source or "").strip().startswith("push://")
+
+
+def _camera_stream_response(camera: Camera, fps: int):
+    """
+    Decide qué tipo de stream usar:
+    - push://... usa la última imagen enviada por el agente SMRI.
+    - 0, 1, rtsp://..., etc. usan el pipeline normal con OpenCV.
+    """
+    if _is_push_camera(camera):
+        return StreamingHttpResponse(
+            generate_push_stream(camera),
+            content_type="multipart/x-mixed-replace;boundary=frame",
+        )
+
+    return StreamingHttpResponse(
+        gen_frames(camera=camera, target_fps=fps),
+        content_type="multipart/x-mixed-replace;boundary=frame",
+    )    
 
 @login_required(login_url="/login/")
 def video_feed(request, camera_id):
     if not is_admin_user(request.user):
         return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
 
-    cv2 = _safe_import_cv2()
-
-    if cv2 is None:
-        return JsonResponse({"success": False, "message": "OpenCV no está instalado."}, status=400)
-
     camera = get_object_or_404(Camera, id=camera_id, is_active=True)
     fps = _get_request_fps(request)
 
-    return StreamingHttpResponse(
-        gen_frames(camera=camera, target_fps=fps),
-        content_type="multipart/x-mixed-replace;boundary=frame",
-    )
-
-@login_required(login_url="/login/")
-def video_feed_default(request):
-    if not is_admin_user(request.user):
-        return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
+    # Si la cámara es tipo push://, no se abre con OpenCV.
+    # Se muestra la última imagen enviada por el SMRI Camera Agent.
+    if _is_push_camera(camera):
+        return _camera_stream_response(camera, fps)
 
     cv2 = _safe_import_cv2()
 
@@ -2250,6 +2264,13 @@ def video_feed_default(request):
             {"success": False, "message": "OpenCV no está instalado."},
             status=400
         )
+
+    return _camera_stream_response(camera, fps)
+
+@login_required(login_url="/login/")
+def video_feed_default(request):
+    if not is_admin_user(request.user):
+        return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
 
     camera = Camera.objects.filter(is_active=True).order_by("id").first()
 
@@ -2261,10 +2282,19 @@ def video_feed_default(request):
 
     fps = _get_request_fps(request)
 
-    return StreamingHttpResponse(
-        gen_frames(camera=camera, target_fps=fps),
-        content_type="multipart/x-mixed-replace;boundary=frame",
-    )
+    # Si la primera cámara activa es push://, no necesita abrirse con OpenCV.
+    if _is_push_camera(camera):
+        return _camera_stream_response(camera, fps)
+
+    cv2 = _safe_import_cv2()
+
+    if cv2 is None:
+        return JsonResponse(
+            {"success": False, "message": "OpenCV no está instalado."},
+            status=400
+        )
+
+    return _camera_stream_response(camera, fps)
 
 @login_required(login_url="/login/")
 def camera_status(request, camera_id):
@@ -2289,6 +2319,60 @@ def camera_status(request, camera_id):
             "message": "La cámara está desactivada en el sistema.",
             "tone": "secondary",
         })
+    
+    if _is_push_camera(camera):
+        camera_key = str(camera.source).replace("push://", "", 1)
+        frame_path = os.path.join(settings.MEDIA_ROOT, "live", f"{camera_key}.jpg")
+
+        if not os.path.exists(frame_path):
+            return JsonResponse({
+                "success": True,
+                "camera_id": camera.id,
+                "name": camera.nombre,
+                "status": "no_signal",
+                "label": "Sin señal",
+                "message": "La cámara tipo agente aún no ha enviado frames.",
+                "tone": "warning",
+            })
+
+        if not camera.last_seen:
+            return JsonResponse({
+                "success": True,
+                "camera_id": camera.id,
+                "name": camera.nombre,
+                "status": "no_signal",
+                "label": "Sin señal",
+                "message": "Existe imagen, pero no se tiene fecha de último frame.",
+                "tone": "warning",
+            })
+
+        seconds_without_signal = (
+            timezone.now() - camera.last_seen
+        ).total_seconds()
+
+        if seconds_without_signal > CAMERA_SIGNAL_TIMEOUT_SECONDS:
+            return JsonResponse({
+                "success": True,
+                "camera_id": camera.id,
+                "name": camera.nombre,
+                "status": "no_signal",
+                "label": "Sin señal",
+                "message": f"No se reciben frames desde hace {seconds_without_signal:.1f} segundos.",
+                "tone": "danger",
+                "seconds_without_signal": round(seconds_without_signal, 1),
+            })
+
+        return JsonResponse({
+            "success": True,
+            "camera_id": camera.id,
+            "name": camera.nombre,
+            "status": "active",
+            "label": "Activa",
+            "message": "La cámara tipo agente está enviando señal.",
+            "tone": "success",
+            "seconds_without_signal": round(seconds_without_signal, 1),
+        })    
+    
 
     with _CAMERA_WORKERS_LOCK:
         worker = _CAMERA_WORKERS.get(camera.id)
@@ -2764,3 +2848,83 @@ class AlertaView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         context["segment"] = "alerta"
         return context
+
+
+@csrf_exempt
+@require_POST
+def push_camera_frame(request):
+    auth_header = request.headers.get("Authorization", "")
+
+    if not auth_header.startswith("Bearer "):
+        return JsonResponse({"ok": False, "error": "Token no enviado"}, status=401)
+
+    token = auth_header.replace("Bearer ", "").strip()
+    camera_key = request.POST.get("camera_key")
+
+    if not camera_key:
+        return JsonResponse({"ok": False, "error": "camera_key requerido"}, status=400)
+
+    camera = Camera.objects.filter(
+        source=f"push://{camera_key}",
+        is_active=True
+    ).first()
+
+    if not camera:
+        return JsonResponse({"ok": False, "error": "Cámara no registrada"}, status=404)
+
+    if not camera.push_token:
+        return JsonResponse({"ok": False, "error": "Cámara sin token configurado"}, status=403)
+
+    if not hmac.compare_digest(token, camera.push_token):
+        return JsonResponse({"ok": False, "error": "Token inválido"}, status=403)
+
+    frame_file = request.FILES.get("frame")
+
+    if not frame_file:
+        return JsonResponse({"ok": False, "error": "Frame no enviado"}, status=400)
+
+    if frame_file.size > 2 * 1024 * 1024:
+        return JsonResponse({"ok": False, "error": "Frame demasiado grande"}, status=413)
+
+    image_bytes = frame_file.read()
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return JsonResponse({"ok": False, "error": "Imagen inválida"}, status=400)
+
+    live_dir = os.path.join(settings.MEDIA_ROOT, "live")
+    os.makedirs(live_dir, exist_ok=True)
+
+    output_path = os.path.join(live_dir, f"{camera_key}.jpg")
+
+    cv2.imwrite(
+        output_path,
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+    )
+
+    camera.last_seen = timezone.now()
+    camera.save(update_fields=["last_seen"])
+
+    return JsonResponse({"ok": True})
+
+def generate_push_stream(camera):
+    camera_key = str(camera.source).replace("push://", "", 1)
+    frame_path = os.path.join(settings.MEDIA_ROOT, "live", f"{camera_key}.jpg")
+
+    while True:
+        if os.path.exists(frame_path):
+            with open(frame_path, "rb") as f:
+                frame_bytes = f.read()
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame_bytes +
+                b"\r\n"
+            )
+        else:
+            time.sleep(0.5)
+
+        time.sleep(0.2)

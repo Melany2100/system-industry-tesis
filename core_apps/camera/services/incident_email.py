@@ -1,5 +1,6 @@
 import logging
 import mimetypes
+from email.utils import formataddr, parseaddr
 from email.mime.image import MIMEImage
 from html import escape
 from pathlib import Path
@@ -14,7 +15,7 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-INCIDENT_EMAIL_SUBJECT = "INCIDENTE LABORAL REGISTRADO"
+INCIDENT_EMAIL_SUBJECT = "Alerta SMRI: incidente laboral registrado"
 ADMIN_GROUP_NAMES = ("Admin", "Admins", "Administrador", "Administradores")
 CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
@@ -50,6 +51,21 @@ def _read_evidence(image_path):
     return filename, content_type, content
 
 
+def _notification_from_email():
+    configured = (settings.DEFAULT_FROM_EMAIL or "").strip()
+    smtp_user = (settings.EMAIL_HOST_USER or "").strip()
+    _, configured_address = parseaddr(configured)
+    address = configured_address or smtp_user
+
+    if not address:
+        return configured
+
+    if configured and configured != configured_address:
+        return configured
+
+    return formataddr(("Sistema SMRI", address))
+
+
 def send_incident_email(event):
     person = event.authorized_person
     recipient = (person.correo or "").strip() if person else ""
@@ -73,7 +89,7 @@ def send_incident_email(event):
         evidence_text = "Este incidente no dispone de evidencia fotografica."
 
     plain_body = (
-        "ESTIMADO USUARIO {person_name}, SE HA REGISTRADO UN INCIDENTE LABORAL.\n\n"
+        f"ESTIMADO USUARIO {person_name}, SE HA REGISTRADO UN INCIDENTE LABORAL.\n\n"
         f"Persona identificada: {person_name}\n"
         f"Incidente incumplido: {event_name}\n"
         f"Detalle: {event.details}\n"
@@ -105,9 +121,14 @@ def send_incident_email(event):
     message = EmailMultiAlternatives(
         subject=INCIDENT_EMAIL_SUBJECT,
         body=plain_body,
-        from_email=settings.DEFAULT_FROM_EMAIL,
+        from_email=_notification_from_email(),
         to=[recipient],
         cc=admin_emails,
+        reply_to=[settings.EMAIL_HOST_USER] if settings.EMAIL_HOST_USER else None,
+        headers={
+            "X-Auto-Response-Suppress": "All",
+            "Auto-Submitted": "auto-generated",
+        },
     )
     message.attach_alternative(html_body, "text/html")
 
@@ -118,8 +139,8 @@ def send_incident_email(event):
         image.add_header("Content-Disposition", "inline", filename=filename)
         message.attach(image)
 
-    message.send(fail_silently=False)
-    return True
+    sent_count = message.send(fail_silently=False)
+    return sent_count > 0
 
 
 def notify_incident_by_email(event_id):

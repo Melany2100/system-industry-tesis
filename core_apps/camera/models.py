@@ -174,15 +174,7 @@ class Camera(models.Model):
     source = models.CharField(max_length=500)
     ubicacion = models.CharField(max_length=200, blank=True, null=True)
     is_active = models.BooleanField(default=True)
-    push_token = models.CharField(max_length=150, blank=True, null=True)
     last_seen = models.DateTimeField(blank=True, null=True)
-
-    def is_push_camera(self):
-        return str(self.source).startswith("push://")
-
-
-    api_token = models.CharField(max_length=150, unique=True, null=True, blank=True)
-    last_seen = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Cámara'

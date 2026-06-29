@@ -20,7 +20,7 @@ class CameraConfig(AppConfig):
 
             preload_camera_models(async_load=True)
 
-            if os.environ.get("SMRI_AUTOSTART_CAMERAS") == "1":
+            if os.environ.get("SMRI_AUTOSTART_CAMERAS", "1") != "0":
                 try:
                     target_fps = int(os.environ.get("SMRI_CAMERA_AUTOSTART_FPS", "8"))
                 except ValueError:

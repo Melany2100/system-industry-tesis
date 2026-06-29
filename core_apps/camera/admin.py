@@ -4,6 +4,7 @@ from .models import AuthorizedPerson, SecurityEvent, Camera
 
 @admin.register(AuthorizedPerson)
 class AuthorizedPersonAdmin(admin.ModelAdmin):
+    actions = ("activate_people", "deactivate_people")
     list_display = (
         'id',
         'nombres',
@@ -34,12 +35,34 @@ class AuthorizedPersonAdmin(admin.ModelAdmin):
         'updated_at',
     )
 
+    @admin.action(description="Activar personas seleccionadas")
+    def activate_people(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f"{updated} persona(s) activada(s).")
+
+    @admin.action(description="Desactivar personas seleccionadas")
+    def deactivate_people(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"{updated} persona(s) desactivada(s).")
+
 
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
-    list_display = ('id', 'nombre', 'source', 'ubicacion', 'is_active')
+    actions = ("activate_cameras", "deactivate_cameras")
+    list_display = ('id', 'nombre', 'source', 'ubicacion', 'is_active', 'last_seen')
     list_filter = ('is_active',)
     search_fields = ('nombre', 'source', 'ubicacion')
+    readonly_fields = ('last_seen',)
+
+    @admin.action(description="Activar camaras seleccionadas")
+    def activate_cameras(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f"{updated} camara(s) activada(s).")
+
+    @admin.action(description="Desactivar camaras seleccionadas")
+    def deactivate_cameras(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"{updated} camara(s) desactivada(s).")
 
 
 @admin.register(SecurityEvent)

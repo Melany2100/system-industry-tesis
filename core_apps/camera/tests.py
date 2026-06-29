@@ -50,7 +50,7 @@ class IncidentEmailTests(SimpleTestCase):
         self.assertEqual(message.to, ["trabajador@example.com"])
         self.assertEqual(message.cc, ["admin@example.com"])
         self.assertIn(
-            "ESTIMADO USUARIO, SE HA REGISTRADO UN INCIDENTE LABORAL",
+            "ESTIMADO USUARIO Ana Perez, SE HA REGISTRADO UN INCIDENTE LABORAL",
             message.body,
         )
         self.assertIn("Incidente incumplido: Falta de EPP", message.body)
@@ -87,6 +87,19 @@ class IncidentEmailTests(SimpleTestCase):
         self.assertFalse(sent)
         self.assertEqual(mail.outbox, [])
         admin_emails.assert_not_called()
+
+    @patch(
+        "core_apps.camera.services.incident_email.EmailMultiAlternatives.send",
+        return_value=0,
+    )
+    @patch(
+        "core_apps.camera.services.incident_email.get_admin_email_addresses",
+        return_value=[],
+    )
+    def test_reports_failure_when_backend_sends_zero_messages(self, admin_emails, send):
+        sent = send_incident_email(self.event)
+
+        self.assertFalse(sent)
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend"

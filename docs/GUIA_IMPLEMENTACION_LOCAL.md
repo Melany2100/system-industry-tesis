@@ -1,93 +1,96 @@
-# Guia de implementacion local - Sistema SMRI
+# Guia completa de instalacion local - Sistema SMRI
 
-Esta guia describe como instalar y ejecutar localmente el Sistema de Monitoreo
-de Riesgos Industriales y Eventos (SMRI). El proyecto es una aplicacion Django
-con modulos de autenticacion, camaras, eventos de seguridad, informes,
-reconocimiento facial, evidencias en `media/` y deteccion con modelos YOLO.
+Esta guia explica como instalar el Sistema de Monitoreo de Riesgos Industriales
+y Eventos (SMRI) en una maquina local Windows, dejarlo conectado a camaras RTSP,
+crear un usuario administrador y configurar el arranque automatico cuando se
+reinicie la maquina.
 
-El flujo local recomendado para pruebas es:
+## 1. Requisitos de la maquina
 
-```text
-Camaras IP / webcam -> Django local -> PostgreSQL local -> Interfaz web local
-```
+### Hardware recomendado
 
-Para un escenario donde la maquina local procesa video y la VPS muestra los
-eventos, revisar tambien:
-
-```text
-docs/ENV_MAQUINA_LOCAL_ENVIA_EVENTOS_VPS.md
-```
-
-## 1. Requisitos previos
-
-### Sistema operativo recomendado
-
-- Windows 10/11 para pruebas locales.
-- Tambien puede ejecutarse en Linux, ajustando los comandos de PowerShell a
-  Bash.
+- CPU Intel i5/Ryzen 5 o superior.
+- 8 GB RAM minimo.
+- 16 GB RAM recomendado si se procesan varias camaras.
+- Disco con al menos 20 GB libres.
+- Conexion estable por cable Ethernet hacia las camaras.
 
 ### Software necesario
 
-- Python 3.10 o superior.
+Instalar antes de configurar el proyecto:
+
+- Python 3.10.
 - PostgreSQL 14 o superior.
 - Git.
-- FFmpeg, recomendado para diagnosticar camaras RTSP.
-- Visual C++ Build Tools o herramientas equivalentes si se compilan paquetes
-  como `dlib`.
+- FFmpeg opcional, pero recomendado para probar RTSP.
+- Visual C++ Build Tools, recomendado si `dlib` o `face-recognition` fallan al instalar.
 
-### Recursos recomendados
+## 2. Copiar el proyecto
 
-- 8 GB RAM como minimo para pruebas con YOLO.
-- 16 GB RAM recomendado si se usaran varias camaras.
-- CPU moderna. GPU opcional.
-- Red local estable hacia las camaras IP.
+Copiar la carpeta del proyecto en la nueva maquina, por ejemplo:
 
-## 2. Preparar el proyecto
-
-Ubicarse en la carpeta del proyecto:
-
-```powershell
-cd C:\Users\HP\Documents\TITULACION\proyecto\v2\system-industry-tesis
+```text
+C:\SMRI\system-industry-tesis
 ```
 
-Crear y activar el entorno virtual:
+Entrar desde PowerShell o CMD:
+
+```powershell
+cd C:\SMRI\system-industry-tesis
+```
+
+La carpeta debe incluir al menos:
+
+```text
+manage.py
+config/
+core_apps/
+templates/
+static/
+camera/
+requirements.txt
+start_smri.bat
+start_smri_autostart.bat
+start_smri_hidden.vbs
+instalar_inicio_windows_smri.bat
+stop_smri.bat
+```
+
+## 3. Crear entorno virtual
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
-```
-
-Actualizar herramientas base:
-
-```powershell
 python -m pip install --upgrade pip setuptools wheel
 ```
 
-Instalar dependencias:
+## 4. Instalar dependencias
+
+El proyecto usa `requirements.txt`. Instalar:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-Si la instalacion falla en `dlib` o `face-recognition`, instalar primero las
-herramientas de compilacion de Windows y volver a ejecutar `pip install`.
+Si falla `dlib` o `face-recognition`:
 
-## 3. Crear la base de datos local
+- Instalar Visual C++ Build Tools.
+- Reiniciar la terminal.
+- Volver a ejecutar `pip install -r requirements.txt`.
 
-El archivo `config/settings.py` esta configurado para PostgreSQL mediante
-variables de entorno. Crear una base y un usuario local.
+## 5. Crear base de datos PostgreSQL
 
-Entrar a `psql` como usuario administrador de PostgreSQL:
+Abrir una terminal y entrar a PostgreSQL:
 
 ```powershell
 psql -U postgres
 ```
 
-Ejecutar:
+Crear base y usuario:
 
 ```sql
 CREATE DATABASE smri_local;
-CREATE USER smri_user WITH PASSWORD 'smri_local_password';
+CREATE USER smri_user WITH PASSWORD 'CAMBIAR_PASSWORD_LOCAL';
 ALTER ROLE smri_user SET client_encoding TO 'utf8';
 ALTER ROLE smri_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE smri_user SET timezone TO 'America/Guayaquil';
@@ -97,18 +100,22 @@ GRANT ALL ON SCHEMA public TO smri_user;
 \q
 ```
 
-> Si PostgreSQL esta instalado con otro usuario, adaptar `DB_USER` y
-> `DB_PASSWORD` en el archivo `.env`.
+Verificar que el servicio de PostgreSQL quede automatico:
 
-## 4. Configurar `.env`
+1. Presionar `Win + R`.
+2. Escribir `services.msc`.
+3. Buscar `postgresql`.
+4. Tipo de inicio: `Automatico`.
 
-Crear un archivo `.env` en la raiz del proyecto:
+## 6. Crear archivo `.env`
+
+Crear `.env` en la raiz del proyecto:
 
 ```powershell
 New-Item -ItemType File .env
 ```
 
-Contenido sugerido para ejecucion local:
+Contenido recomendado:
 
 ```env
 SECRET_KEY=cambiar_por_una_clave_larga_y_segura
@@ -118,7 +125,7 @@ CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 
 DB_NAME=smri_local
 DB_USER=smri_user
-DB_PASSWORD=smri_local_password
+DB_PASSWORD=CAMBIAR_PASSWORD_LOCAL
 DB_HOST=127.0.0.1
 DB_PORT=5432
 
@@ -126,25 +133,36 @@ SESSION_COOKIE_SECURE=False
 CSRF_COOKIE_SECURE=False
 SECURE_SSL_REDIRECT=False
 
-EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USE_TLS=True
 EMAIL_USE_SSL=False
-EMAIL_HOST_USER=
-EMAIL_HOST_PASSWORD=
-DEFAULT_FROM_EMAIL=no-reply@smri.local
+EMAIL_HOST_USER=tu_correo@gmail.com
+EMAIL_HOST_PASSWORD=clave_de_aplicacion_gmail
+DEFAULT_FROM_EMAIL=Sistema SMRI <tu_correo@gmail.com>
 EMAIL_TIMEOUT=10
 
 MEDIA_URL=/media/
 STATIC_URL=/static/
 
-RTSP_CAMERA_URL=rtsp://usuario:password@IP_CAMARA:554/stream1
-RTSP_CAMERA_URL_FAST=rtsp://usuario:password@IP_CAMARA:554/stream2
+RTSP_TRANSPORT=udp
+RTSP_INITIAL_FRAME_TIMEOUT_SECONDS=15
+RTSP_STALE_FRAME_SECONDS=2
 
+RISK_YOLO_FRAME_INTERVAL=30
+FACE_RECOGNITION_FRAME_INTERVAL=16
+FACE_DETECTION_FRAME_INTERVAL=12
+FACE_ANALYSIS_WIDTH=480
+PPE_FRAME_INTERVAL=45
+PPE_INFERENCE_IMGSZ=960
+DETECT_SHARP_EVERY_N_FRAMES=6
+DETECT_POSE_EVERY_N_FRAMES=35
+DETECT_PHONE_EVERY_N_FRAMES=4
+EVENT_COOLDOWN_SECONDS=10
 ```
 
-Para generar una clave secreta:
+Generar una clave segura para `SECRET_KEY`:
 
 ```powershell
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
@@ -152,16 +170,49 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 
 Copiar el resultado en `SECRET_KEY`.
 
-## 5. Verificar modelos y pesos
+## 7. Migrar la base de datos
 
-El sistema espera modelos YOLO en rutas locales. Verificar que existan:
+Con `.venv` activo:
+
+```powershell
+python manage.py check
+python manage.py migrate
+```
+
+## 8. Crear usuario administrador
+
+Opcion recomendada:
+
+```powershell
+python manage.py createsuperuser
+```
+
+Completar:
+
+```text
+Username: admin
+Email address: correo_admin@empresa.com
+Password: una_clave_segura
+```
+
+Opcion demo:
+
+```powershell
+python manage.py seed_demo --username admin --password admin12345 --events 8
+```
+
+No usar `admin12345` en una maquina final.
+
+## 9. Verificar modelos YOLO
+
+Revisar que existan los modelos necesarios:
 
 ```powershell
 Get-ChildItem camera
 Get-ChildItem camera\weights
 ```
 
-Rutas usadas por la configuracion:
+Rutas esperadas:
 
 ```text
 camera/weights/yolov8s.pt
@@ -171,8 +222,7 @@ camera/yolov3-tiny.cfg
 camera/coco.names
 ```
 
-Si los archivos `.pt` estan en la raiz del proyecto, moverlos a
-`camera/weights/` o ajustar las rutas en `config/settings.py`. Ejemplo:
+Si los modelos `.pt` estan en la raiz, crear `camera\weights` y moverlos:
 
 ```powershell
 New-Item -ItemType Directory -Force camera\weights
@@ -180,87 +230,33 @@ Move-Item yolov8s.pt camera\weights\yolov8s.pt
 Move-Item yolov8s-pose.pt camera\weights\yolov8s-pose.pt
 ```
 
-No mover archivos si ya existen en `camera/weights/`.
+## 10. Primer arranque manual
 
-## 6. Aplicar migraciones
-
-Con el entorno virtual activo:
-
-```powershell
-python manage.py check
-python manage.py migrate
-```
-
-Crear datos iniciales de prueba:
-
-```powershell
-python manage.py seed_demo --username admin --password admin12345 --events 8
-```
-
-Tambien se puede crear un superusuario manual:
-
-```powershell
-python manage.py createsuperuser
-```
-
-## 7. Ejecutar el sistema
-
-Opcion rapida en Windows:
+Ejecutar:
 
 ```powershell
 .\start_smri.bat
 ```
 
-Este script:
-
-- Activa `.venv` si existe.
-- Define `SMRI_AUTOSTART_CAMERAS=1`.
-- Define `SMRI_CAMERA_AUTOSTART_FPS=8`.
-- Ejecuta migraciones pendientes.
-- Inicia Django en `0.0.0.0:8000`.
-
-Opcion manual:
-
-```powershell
-$env:SMRI_AUTOSTART_CAMERAS="1"
-$env:SMRI_CAMERA_AUTOSTART_FPS="8"
-python manage.py runserver 0.0.0.0:8000
-```
-
-Abrir en el navegador:
+Abrir:
 
 ```text
 http://127.0.0.1:8000/login/
 ```
 
-Credenciales demo, si se ejecuto `seed_demo`:
+Si inicia correctamente, detener con:
 
 ```text
-Usuario: admin
-Clave: admin12345
+CTRL + C
 ```
 
-## 8. Rutas principales
+o usando:
 
-```text
-/login/                 Inicio de sesion
-/                       Inicio protegido
-/dashboard/             Panel principal
-/camera/                Modulo de camaras
-/informes/              Informes
-/settings/              Configuracion de usuarios/perfil
-/admin/                 Administracion Django
-/api/                   API del modulo de camara
+```powershell
+.\stop_smri.bat
 ```
 
-Eventos de seguridad:
-
-```text
-/camera/security-events/
-/camera/security-events/<id>/resolve/
-```
-
-## 9. Registrar camaras
+## 11. Registrar camaras
 
 Entrar al admin:
 
@@ -268,18 +264,35 @@ Entrar al admin:
 http://127.0.0.1:8000/admin/
 ```
 
-Crear registros en el modelo `Camera`.
-
-Ejemplo con camara RTSP:
+Ir a:
 
 ```text
-Nombre: VIGI C240 - Area 1
-Source: rtsp://admin:CAMBIAR_PASSWORD_CAMARA@192.168.10.201:554/stream2
+Camera > Cameras
+```
+
+Crear camara RTSP:
+
+```text
+Nombre: VIGI C240 1
+Source: rtsp://admin:CLAVE_CAMARA@IP_CAMARA:554/stream2
 Ubicacion: Area 1
 Activa: Si
 ```
 
-Ejemplo con webcam local:
+Recomendacion importante:
+
+- Usar `stream2` para el sistema de deteccion.
+- Evitar `stream1` si la imagen va lenta o se congela.
+- `stream1` suele ser alta resolucion y consume mas CPU/red.
+- `stream2` suele ser substream liviano y reduce retraso.
+
+Ejemplo:
+
+```text
+rtsp://admin:CLAVE@192.168.10.201:554/stream2
+```
+
+Si se usa webcam local:
 
 ```text
 Nombre: Webcam local
@@ -288,219 +301,235 @@ Ubicacion: Pruebas
 Activa: Si
 ```
 
-Recomendaciones:
+Desactivar o eliminar camaras que no se usen. No dejar activas camaras antiguas
+tipo `push://`, porque el sistema local ya no usa ese flujo.
 
-- Usar `stream2` para deteccion si la camara lo soporta, porque suele ser mas
-  liviano.
-- Mantener las camaras y la PC en la misma red local o VLAN.
-- Evitar exponer RTSP a Internet.
-- Verificar que usuario, clave, IP y stream sean correctos.
+## 12. Probar RTSP antes de usarlo
 
-## 10. Probar camaras RTSP
-
-Con FFmpeg instalado:
+Con FFmpeg:
 
 ```powershell
-ffprobe "rtsp://usuario:password@IP_CAMARA:554/stream2"
+ffprobe "rtsp://admin:CLAVE@IP_CAMARA:554/stream2"
 ```
 
-O capturar unos segundos:
-
-```powershell
-ffmpeg -rtsp_transport tcp -i "rtsp://usuario:password@IP_CAMARA:554/stream2" -t 5 -f null -
-```
-
-Si falla:
-
-- Confirmar que la PC hace ping a la camara.
-- Validar credenciales.
-- Probar otra ruta de stream: `stream1`, `stream2`, `h264Preview_01_main`,
-  `h264Preview_01_sub`.
-- Revisar firewall local.
-- Confirmar que la camara permite mas de una conexion simultanea.
-
-## 11. Evidencias y archivos media
-
-Las imagenes de eventos se guardan en:
+Con VLC:
 
 ```text
-media/
+Medio > Abrir ubicacion de red > rtsp://...
 ```
 
-En desarrollo, Django sirve `media/` automaticamente porque `DEBUG=True`.
-Verificar que la carpeta exista:
+Si VLC o FFmpeg tambien se retrasan, el problema esta en red, camara, IP,
+credenciales o tipo de stream.
+
+## 13. Arranque automatico oculto con Windows
+
+Ejecutar una sola vez:
 
 ```powershell
-New-Item -ItemType Directory -Force media
+.\instalar_inicio_windows_smri.bat
 ```
 
-Si se procesa localmente y se quiere visualizar en una VPS, hay que sincronizar
-`media/` hacia el servidor o implementar un endpoint que reciba evento +
-evidencia.
+Esto registra un archivo en:
 
-## 12. Correo de alertas
+```text
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+```
 
-Para pruebas locales se recomienda:
+El arranque automatico usa:
+
+```text
+start_smri_hidden.vbs
+```
+
+Ese archivo inicia:
+
+```text
+start_smri_autostart.bat
+```
+
+sin dejar la ventana negra visible.
+
+Cuando Windows reinicie e inicie sesion, el sistema levantara solo.
+
+## 14. Verificar que arranco
+
+Abrir:
+
+```text
+http://127.0.0.1:8000/login/
+```
+
+Revisar log:
+
+```text
+logs/smri_autostart.log
+```
+
+En PowerShell:
+
+```powershell
+Get-Content logs\smri_autostart.log -Tail 80
+```
+
+## 15. Apagar el sistema
+
+Ejecutar:
+
+```powershell
+.\stop_smri.bat
+```
+
+Este script busca el proceso que escucha en el puerto `8000` y lo detiene.
+
+## 16. Ajustes para que la camara no se congele
+
+Primero revisar en admin:
+
+- Dejar activas solo las camaras necesarias.
+- Eliminar o desactivar camaras `push://`.
+- Usar `stream2` en camaras RTSP.
+- Si hay webcam `source=0` y no se usa, desactivarla.
+
+Luego ajustar `.env` si aun hay retraso:
+
+```env
+RTSP_TRANSPORT=udp
+RISK_YOLO_FRAME_INTERVAL=40
+FACE_RECOGNITION_FRAME_INTERVAL=20
+PPE_FRAME_INTERVAL=60
+DETECT_PHONE_EVERY_N_FRAMES=6
+```
+
+Si la red pierde imagen con UDP, probar:
+
+```env
+RTSP_TRANSPORT=tcp
+```
+
+Tambien se puede bajar el FPS de arranque en:
+
+```text
+start_smri_autostart.bat
+start_smri.bat
+```
+
+Linea:
+
+```bat
+set SMRI_CAMERA_AUTOSTART_FPS=2
+```
+
+## 17. Correos
+
+Para Gmail se necesita una clave de aplicacion:
+
+```env
+EMAIL_HOST_USER=tu_correo@gmail.com
+EMAIL_HOST_PASSWORD=clave_de_aplicacion_gmail
+DEFAULT_FROM_EMAIL=Sistema SMRI <tu_correo@gmail.com>
+```
+
+Si aparece:
+
+```text
+WinError 10013
+```
+
+Windows, antivirus o firewall esta bloqueando la salida SMTP. Revisar permisos
+para Python o permitir salida al puerto `587`.
+
+Para pruebas sin enviar correos reales:
 
 ```env
 EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 ```
 
-Asi los correos aparecen en la terminal y no se envian realmente.
+## 18. Gestion desde Django Admin
 
-Para usar SMTP:
+Desde `/admin/` se puede:
 
-```env
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USE_TLS=True
-EMAIL_USE_SSL=False
-EMAIL_HOST_USER=cuenta.smtp@example.com
-EMAIL_HOST_PASSWORD=clave_o_token_de_aplicacion
-DEFAULT_FROM_EMAIL=Sistema SMRI <cuenta.smtp@example.com>
-```
+- Crear usuarios administradores.
+- Crear o eliminar camaras.
+- Activar/desactivar camaras.
+- Crear o eliminar personas autorizadas.
+- Activar/desactivar personas autorizadas.
+- Eliminar informes seleccionados.
+- Eliminar informes con mas de 30, 60 o 90 dias.
 
-En Gmail normalmente se necesita una clave de aplicacion.
+Para crear otro administrador:
 
-## 13. Validar funcionamiento
+1. Entrar a `/admin/`.
+2. Ir a `Authentication and Authorization > Users`.
+3. Crear usuario.
+4. Marcar `Staff status`.
+5. Agregar al grupo `Administrador` si corresponde.
 
-Ejecutar:
+## 19. Checklist final
 
-```powershell
-python manage.py check
-python manage.py showmigrations
-```
+- [ ] Python instalado.
+- [ ] PostgreSQL instalado y en modo automatico.
+- [ ] Proyecto copiado.
+- [ ] `.venv` creado.
+- [ ] `pip install -r requirements.txt` ejecutado.
+- [ ] `.env` creado.
+- [ ] Base `smri_local` creada.
+- [ ] `python manage.py migrate` ejecutado.
+- [ ] Usuario admin creado.
+- [ ] Camaras RTSP registradas con `stream2`.
+- [ ] Camaras no usadas desactivadas.
+- [ ] `start_smri.bat` probado manualmente.
+- [ ] `instalar_inicio_windows_smri.bat` ejecutado.
+- [ ] Sistema probado tras reiniciar Windows.
+- [ ] Log revisado en `logs/smri_autostart.log`.
 
-Validar conexion a la base:
+## 20. Problemas comunes
 
-```powershell
-python manage.py shell
-```
-
-Dentro del shell:
-
-```python
-from core_apps.camera.models import Camera, SecurityEvent
-Camera.objects.count()
-SecurityEvent.objects.count()
-```
-
-Crear un evento manual de prueba:
-
-```python
-SecurityEvent.objects.create(
-    event_type="dangerous_object",
-    severity="ALTO",
-    details="Evento local de prueba",
-)
-```
-
-Luego revisar la interfaz de eventos/informes.
-
-## 14. Ejecucion local conectada a una VPS
-
-Si la PC local procesa camaras pero la base de datos vive en una VPS, no usar
-PostgreSQL local. En su lugar:
-
-1. Abrir un tunel SSH:
-
-```powershell
-ssh -N -L 15432:127.0.0.1:5432 usuario_vps@IP_PUBLICA_VPS
-```
-
-2. Configurar `.env`:
-
-```env
-DB_NAME=smri_prod
-DB_USER=smri_user
-DB_PASSWORD=CAMBIAR_PASSWORD_POSTGRES_VPS
-DB_HOST=127.0.0.1
-DB_PORT=15432
-```
-
-3. Iniciar el sistema local:
-
-```powershell
-.\start_smri.bat
-```
-
-Los eventos se escribiran en la base de la VPS. Para que las evidencias tambien
-se vean desde la VPS, sincronizar `media/` o usar un almacenamiento compartido.
-
-## 15. Problemas comunes
-
-### `SECRET_KEY` vacio
-
-Si Django no arranca, revisar que `.env` tenga:
-
-```env
-SECRET_KEY=valor_largo_y_seguro
-```
-
-### Error de conexion a PostgreSQL
+### El sistema no abre
 
 Revisar:
 
-```env
-DB_NAME=
-DB_USER=
-DB_PASSWORD=
-DB_HOST=
-DB_PORT=
+```powershell
+Get-Content logs\smri_autostart.log -Tail 100
 ```
 
-Probar conexion directa:
+Verificar puerto:
 
 ```powershell
-psql -U smri_user -h 127.0.0.1 -p 5432 -d smri_local
+netstat -ano | findstr ":8000"
 ```
 
-### Error de `ALLOWED_HOSTS`
+### La camara se congela
 
-Si se accede desde otra PC de la red, agregar la IP local:
+- Cambiar `stream1` por `stream2`.
+- Dejar activa solo una camara para probar.
+- Bajar `SMRI_CAMERA_AUTOSTART_FPS` a `1`.
+- Subir `PPE_FRAME_INTERVAL`.
+- Usar cable Ethernet.
+
+### No conecta PostgreSQL
+
+Verificar servicio de PostgreSQL y `.env`:
 
 ```env
-ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,192.168.10.10
-CSRF_TRUSTED_ORIGINS=http://192.168.10.10:8000,http://127.0.0.1:8000
+DB_NAME=smri_local
+DB_USER=smri_user
+DB_PASSWORD=CAMBIAR_PASSWORD_LOCAL
+DB_HOST=127.0.0.1
+DB_PORT=5432
 ```
 
-Reiniciar Django.
+### No llegan correos
 
-### La camara no muestra video
+- Revisar clave de aplicacion Gmail.
+- Revisar firewall.
+- Probar temporalmente `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`.
 
-Validar primero con `ffprobe` o VLC. Si ahi tampoco funciona, el problema esta
-en red, credenciales o ruta RTSP.
+### Pantalla negra visible
 
-### Alto consumo de CPU
+Ejecutar nuevamente:
 
-Reducir carga:
+```powershell
+.\instalar_inicio_windows_smri.bat
+```
 
-- Usar `stream2`.
-- Bajar `SMRI_CAMERA_AUTOSTART_FPS`.
-- Procesar menos camaras.
-- Aumentar intervalos de deteccion en `config/settings.py`.
-
-### No aparecen imagenes de evidencia
-
-Verificar:
-
-- Que el evento tenga `image_path`.
-- Que el archivo exista dentro de `media/`.
-- Que `DEBUG=True` en local.
-- Que `MEDIA_URL=/media/`.
-
-## 16. Checklist final
-
-- [ ] Python instalado.
-- [ ] PostgreSQL instalado y base creada.
-- [ ] `.venv` creado y activado.
-- [ ] Dependencias instaladas con `pip install -r requirements.txt`.
-- [ ] `.env` creado con `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS` y `DB_*`.
-- [ ] Modelos YOLO ubicados en las rutas esperadas.
-- [ ] Migraciones aplicadas.
-- [ ] Usuario demo o superusuario creado.
-- [ ] Camaras registradas en el admin.
-- [ ] RTSP probado con `ffprobe`, VLC o FFmpeg.
-- [ ] Servidor iniciado en `http://127.0.0.1:8000/login/`.
-- [ ] Eventos y evidencias verificados desde la interfaz.
+Debe apuntar a `start_smri_hidden.vbs`.

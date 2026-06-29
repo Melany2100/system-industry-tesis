@@ -1093,8 +1093,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
         # Opciones para reducir retraso en RTSP con OpenCV + FFMPEG
         if camera_source.lower().startswith("rtsp://"):
+            rtsp_transport = str(getattr(settings, "RTSP_TRANSPORT", "udp") or "udp").lower()
+            if rtsp_transport not in {"udp", "tcp"}:
+                rtsp_transport = "udp"
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-                "rtsp_transport;tcp|max_delay;500000"
+                f"rtsp_transport;{rtsp_transport}|max_delay;100000|fflags;nobuffer|flags;low_delay"
             )
 
         cap = cv2.VideoCapture(camera_source, cv2.CAP_FFMPEG)
@@ -1213,6 +1216,17 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             first_no_frame_at = None
 
             frame_counter += 1
+
+            if emit_jpeg is not None:
+                preview_ok, preview_buffer = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), 60],
+                )
+
+                if preview_ok:
+                    emit_jpeg(preview_buffer.tobytes())
+
             frame_height, frame_width = frame.shape[:2]
             face_analysis_width = min(
                 frame_width,
@@ -2153,12 +2167,24 @@ def _get_or_start_camera_worker(
 
 def autostart_active_camera_workers(target_fps: int = 8):
     started = 0
+    skipped = 0
 
     try:
         close_old_connections()
         cameras = Camera.objects.filter(is_active=True).order_by("id")
 
         for camera in cameras:
+            source = str(camera.source or "").strip()
+
+            if source.startswith("push://"):
+                skipped += 1
+                _log_line(
+                    f"Autoinicio omitido para camara no local: {camera.nombre}",
+                    key=f"camera_autostart_skip_{camera.id}",
+                    throttle_sec=10,
+                )
+                continue
+
             _get_or_start_camera_worker(
                 camera=camera,
                 target_fps=target_fps,
@@ -2167,7 +2193,7 @@ def autostart_active_camera_workers(target_fps: int = 8):
             started += 1
 
         _log_line(
-            f"Autoinicio de camaras activo: {started} camara(s)",
+            f"Autoinicio de camaras activo: {started} camara(s), {skipped} omitida(s)",
             key="camera_autostart",
             throttle_sec=10,
         )

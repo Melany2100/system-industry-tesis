@@ -10,7 +10,7 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 set SMRI_AUTOSTART_CAMERAS=1
-set SMRI_CAMERA_AUTOSTART_FPS=8
+set SMRI_CAMERA_AUTOSTART_FPS=2
 
 echo [SMRI] Aplicando migraciones pendientes...
 python manage.py migrate

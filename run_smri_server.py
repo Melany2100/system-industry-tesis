@@ -10,7 +10,7 @@ LOG_DIR.mkdir(exist_ok=True)
 os.chdir(BASE_DIR)
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 os.environ.setdefault("SMRI_AUTOSTART_CAMERAS", "1")
-os.environ.setdefault("SMRI_CAMERA_AUTOSTART_FPS", "2")
+os.environ.setdefault("SMRI_CAMERA_AUTOSTART_FPS", "8")
 
 stdout_log = open(LOG_DIR / "smri_server_stdout.log", "a", buffering=1, encoding="utf-8")
 stderr_log = open(LOG_DIR / "smri_server_stderr.log", "a", buffering=1, encoding="utf-8")

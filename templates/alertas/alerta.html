@@ -1109,7 +1109,7 @@ document.addEventListener("DOMContentLoaded", function () {
   loadAlerts();
   updateTimestamp();
 
-  setInterval(loadAlerts, 5000);
+  setInterval(loadAlerts, {{ events_refresh_ms|default:5000 }});
 });
 </script>
 {% endblock javascripts %}

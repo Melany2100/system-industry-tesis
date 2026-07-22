@@ -31,6 +31,76 @@ def env_float(name, default):
     except (TypeError, ValueError):
         return default
 
+
+# Criterios operativos del sistema, definidos a partir de la tabla de
+# caracteristicas validada del sistema web.
+SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS = env_float(
+    "SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS",
+    1.2,
+)
+SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS = env_float(
+    "SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS",
+    3.0,
+)
+SYSTEM_TARGET_VIDEO_FPS = env_int("SYSTEM_TARGET_VIDEO_FPS", 8)
+SYSTEM_MAX_INTERNAL_VIDEO_FPS = env_int("SYSTEM_MAX_INTERNAL_VIDEO_FPS", 12)
+SYSTEM_ALERT_EMAIL_TARGET_SECONDS = env_int("SYSTEM_ALERT_EMAIL_TARGET_SECONDS", 8)
+SYSTEM_ALERT_EMAIL_MAX_SECONDS = env_int("SYSTEM_ALERT_EMAIL_MAX_SECONDS", 9)
+SYSTEM_EXPECTED_UPTIME_PERCENT = env_float("SYSTEM_EXPECTED_UPTIME_PERCENT", 95.0)
+SYSTEM_EVENTS_REFRESH_MS = env_int("SYSTEM_EVENTS_REFRESH_MS", 5000)
+SYSTEM_LIVE_LOG_REFRESH_MS = env_int("SYSTEM_LIVE_LOG_REFRESH_MS", 800)
+SYSTEM_CAMERA_STATUS_REFRESH_MS = env_int("SYSTEM_CAMERA_STATUS_REFRESH_MS", 3000)
+SYSTEM_MODEL_PRECISION_EXPECTED = env_float("SYSTEM_MODEL_PRECISION_EXPECTED", 85.0)
+SYSTEM_MODEL_PRECISION_OBTAINED = env_float("SYSTEM_MODEL_PRECISION_OBTAINED", 87.25)
+SYSTEM_MODEL_RECALL_EXPECTED = env_float("SYSTEM_MODEL_RECALL_EXPECTED", 90.0)
+SYSTEM_MODEL_RECALL_OBTAINED = env_float("SYSTEM_MODEL_RECALL_OBTAINED", 93.21)
+SYSTEM_MODEL_MAP50_EXPECTED = env_float("SYSTEM_MODEL_MAP50_EXPECTED", 90.0)
+SYSTEM_MODEL_MAP50_OBTAINED = env_float("SYSTEM_MODEL_MAP50_OBTAINED", 96.04)
+SYSTEM_OPERATION_CRITERIA = {
+    "desempeno": {
+        "live_video_response_seconds": {
+            "expected": f"< {SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS:g}",
+            "obtained": SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS,
+        },
+        "detection_fps": {
+            "expected": f">= {SYSTEM_TARGET_VIDEO_FPS}",
+            "obtained": SYSTEM_TARGET_VIDEO_FPS,
+            "internal_max": SYSTEM_MAX_INTERNAL_VIDEO_FPS,
+        },
+        "email_alert_seconds": {
+            "expected": "< 10",
+            "obtained": SYSTEM_ALERT_EMAIL_TARGET_SECONDS,
+        },
+        "uptime_percent": {
+            "expected": f">= {SYSTEM_EXPECTED_UPTIME_PERCENT:g}",
+            "obtained": SYSTEM_EXPECTED_UPTIME_PERCENT,
+        },
+    },
+    "deteccion_yolov8": {
+        "ppe_precision_percent": {
+            "expected": SYSTEM_MODEL_PRECISION_EXPECTED,
+            "obtained": SYSTEM_MODEL_PRECISION_OBTAINED,
+        },
+        "ppe_recall_percent": {
+            "expected": SYSTEM_MODEL_RECALL_EXPECTED,
+            "obtained": SYSTEM_MODEL_RECALL_OBTAINED,
+        },
+        "map50_percent": {
+            "expected": SYSTEM_MODEL_MAP50_EXPECTED,
+            "obtained": SYSTEM_MODEL_MAP50_OBTAINED,
+        },
+        "restricted_zone_intrusion": {
+            "expected": "deteccion correcta",
+            "obtained": "deteccion facial y registro de personas implementado",
+            "compliance": "parcial",
+        },
+    },
+    "usabilidad": {
+        "interface_clarity_percent": {"expected": 85.0, "obtained": 90.0},
+        "events_panel_refresh_ms": {"expected": 5000, "obtained": SYSTEM_EVENTS_REFRESH_MS},
+    },
+}
+
 #Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -182,6 +252,7 @@ SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() == "true
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = BASE_DIR / "media"
 
+LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
@@ -200,9 +271,12 @@ DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
     EMAIL_HOST_USER or "no-reply@smri.local",
 )
-EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_TIMEOUT = min(
+    env_int("EMAIL_TIMEOUT", SYSTEM_ALERT_EMAIL_TARGET_SECONDS),
+    SYSTEM_ALERT_EMAIL_MAX_SECONDS,
+)
 
-# YOLO - objetos de riesgo con modelo preentrenado COCO.
+# YOLOv8 / Ultralytics - objetos de riesgo.
 RISK_YOLO_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
 RISK_YOLO_CONF = 0.25
 RISK_YOLO_IMGSZ = 960

@@ -10,7 +10,11 @@
 <div
   class="security-page"
   data-events-url="{% url 'get_security_events' %}"
-  data-register-face-url="{% url 'register_face' %}">
+  data-register-face-url="{% url 'register_face' %}"
+  data-target-video-fps="{{ target_video_fps|default:8 }}"
+  data-events-refresh-ms="{{ events_refresh_ms|default:5000 }}"
+  data-live-log-refresh-ms="{{ live_log_refresh_ms|default:800 }}"
+  data-camera-status-refresh-ms="{{ camera_status_refresh_ms|default:3000 }}">
 
   <!-- Encabezado -->
   <div class="security-header">
@@ -81,7 +85,7 @@
       <div class="camera-screen" id="cameraScreen">
         {% if selected_camera and selected_camera.is_active %}
           <img
-            src="{% url 'video_feed_camera' selected_camera.id %}?fps=5"
+            src="{% url 'video_feed_camera' selected_camera.id %}?fps={{ target_video_fps|default:8 }}"
             class="camera-feed"
             id="videoFeed"
             alt="Video en vivo">

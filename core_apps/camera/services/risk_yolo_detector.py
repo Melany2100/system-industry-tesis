@@ -28,7 +28,7 @@ class RiskDetection:
     should_alert: bool
 
 
-COCO_TO_INTERNAL = {
+YOLO_LABEL_TO_INTERNAL = {
     "knife": "knife",
     "scissors": "scissors",
     "cell phone": "cell_phone",
@@ -160,8 +160,8 @@ class RiskYoloDetector:
 
         for box in results[0].boxes:
             cls_id = int(box.cls[0])
-            coco_label = self.model.names[cls_id]
-            internal_label = COCO_TO_INTERNAL.get(coco_label)
+            model_label = self.model.names[cls_id]
+            internal_label = YOLO_LABEL_TO_INTERNAL.get(model_label)
 
             if not internal_label:
                 continue
@@ -183,7 +183,7 @@ class RiskYoloDetector:
 
             detections.append(
                 RiskDetection(
-                    label=coco_label,
+                    label=model_label,
                     internal_label=internal_label,
                     confidence=confidence,
                     box=(x1, y1, x2, y2),

@@ -14,7 +14,11 @@ $(document).ready(function () {
     urls: {
       events: $page.data('events-url'),
       registerFace: $page.data('register-face-url')
-    }
+    },
+    targetVideoFps: Number($page.data('target-video-fps')) || 8,
+    eventsRefreshMs: Number($page.data('events-refresh-ms')) || 5000,
+    liveLogRefreshMs: Number($page.data('live-log-refresh-ms')) || 800,
+    cameraStatusRefreshMs: Number($page.data('camera-status-refresh-ms')) || 3000
   };
 
   function escapeHtml(str) {
@@ -182,7 +186,7 @@ $(document).ready(function () {
     $('#noCameraBox').remove();
     ensureVideoFeedExists();
 
-    const finalUrl = videoUrl + '?fps=5&t=' + Date.now();
+    const finalUrl = videoUrl + '?fps=' + APP_CONFIG.targetVideoFps + '&t=' + Date.now();
 
     lastVideoErrorAt = 0;
 
@@ -521,14 +525,14 @@ $(document).ready(function () {
   setInterval(updateTimestamp, 1000);
 
   loadSecurityEvents();
-  setInterval(loadSecurityEvents, 5000);
+  setInterval(loadSecurityEvents, APP_CONFIG.eventsRefreshMs);
 
   loadLiveLog();
-  setInterval(loadLiveLog, 800);
+  setInterval(loadLiveLog, APP_CONFIG.liveLogRefreshMs);
 
   changeCamera();
   if (cameraStatusTimer) {
     clearInterval(cameraStatusTimer);
   }
-  cameraStatusTimer = setInterval(loadCameraStatus, 3000);
+  cameraStatusTimer = setInterval(loadCameraStatus, APP_CONFIG.cameraStatusRefreshMs);
 });

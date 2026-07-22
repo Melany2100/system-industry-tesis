@@ -3,7 +3,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core import mail
-from django.test import SimpleTestCase, override_settings
+from django.contrib.auth.models import Group, User
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from core_apps.camera.services.incident_email import (
@@ -11,6 +13,7 @@ from core_apps.camera.services.incident_email import (
     notify_incident_by_email,
     send_incident_email,
 )
+from core_apps.camera.models import AuthorizedPerson, Camera, SecurityEvent
 
 
 @override_settings(
@@ -120,3 +123,77 @@ class IncidentEmailTests(SimpleTestCase):
         self.assertEqual(event.email_status, "FAILED")
         self.assertIn("modo consola", event.email_error)
         event.save.assert_called_once()
+
+
+class SecurityEventFunctionalTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        admin_group = Group.objects.get(name="Administrador")
+        operator_group = Group.objects.get(name="Operador")
+        cls.admin = User.objects.create_user("admin_eventos", password="Clave-2026", is_superuser=True)
+        cls.admin.groups.add(admin_group)
+        cls.operator = User.objects.create_user(
+            "maria", first_name="Maria", last_name="Lopez",
+            email="maria@smri.test", password="Clave-2026",
+        )
+        cls.operator.groups.add(operator_group)
+        cls.person = AuthorizedPerson.objects.create(
+            nombres="Maria", apellidos="Lopez", correo="maria@smri.test",
+            cargo="Operadora", face_encoding="[0.2, 0.3]",
+        )
+        cls.camera = Camera.objects.create(nombre="Camara Planta", source="0")
+        cls.own_event = SecurityEvent.objects.create(
+            event_type="phone_usage", severity="MEDIO", details="Uso prolongado de celular",
+            authorized_person=cls.person, camera=cls.camera,
+        )
+        cls.other_event = SecurityEvent.objects.create(
+            event_type="dangerous_object", severity="ALTO", details="Tijeras detectadas",
+            camera=cls.camera,
+        )
+
+    def test_admin_lists_all_events_with_daily_summary(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse("get_security_events"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["events"]), 2)
+        self.assertEqual(payload["summary"]["total_today"], 2)
+        self.assertEqual(payload["summary"]["high_priority_today"], 1)
+
+    def test_operator_only_lists_events_associated_with_own_person(self):
+        self.client.force_login(self.operator)
+        response = self.client.get(reverse("get_security_events"))
+
+        self.assertEqual(response.status_code, 200)
+        event_ids = [item["id"] for item in response.json()["events"]]
+        self.assertEqual(event_ids, [self.own_event.id])
+
+    def test_operator_can_review_own_event_but_not_unrelated_event(self):
+        self.client.force_login(self.operator)
+        own_response = self.client.post(reverse("review_security_event", args=[self.own_event.id]))
+        other_response = self.client.post(reverse("review_security_event", args=[self.other_event.id]))
+
+        self.assertEqual(own_response.status_code, 200)
+        self.assertEqual(other_response.status_code, 403)
+        self.own_event.refresh_from_db()
+        self.assertEqual(self.own_event.reviewed_by, self.operator)
+        self.assertIsNotNone(self.own_event.reviewed_at)
+
+    def test_admin_resolves_event_and_records_manager(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(reverse("mark_event_resolved", args=[self.other_event.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.other_event.refresh_from_db()
+        self.assertTrue(self.other_event.resolved)
+        self.assertEqual(self.other_event.managed_by, self.admin)
+        self.assertIsNotNone(self.other_event.managed_at)
+
+    def test_operator_cannot_resolve_event(self):
+        self.client.force_login(self.operator)
+        response = self.client.post(reverse("mark_event_resolved", args=[self.own_event.id]))
+
+        self.assertEqual(response.status_code, 403)
+        self.own_event.refresh_from_db()
+        self.assertFalse(self.own_event.resolved)

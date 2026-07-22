@@ -24,7 +24,7 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 set SMRI_AUTOSTART_CAMERAS=1
-set SMRI_CAMERA_AUTOSTART_FPS=2
+set SMRI_CAMERA_AUTOSTART_FPS=8
 
 echo [SMRI] Verificando Django... >> "%LOG_FILE%"
 python manage.py check >> "%LOG_FILE%" 2>&1

@@ -274,6 +274,31 @@ $(document).ready(function () {
     });
   }
 
+  function formatEventDetails(details) {
+    const text = String(details || 'Sin detalles adicionales').trim();
+    const marker = /(Motivo|Descripci[oó]n|Categor[ií]a|Persona|Estado|Evento adicional|Confianza|Nivel)\s*:\s*/gi;
+    const normalized = text.replace(marker, '\n$1: ').trim();
+    const rows = normalized.split(/\n+/).map(line => line.trim()).filter(Boolean);
+
+    return rows.map(row => {
+      const separator = row.indexOf(':');
+
+      if (separator < 0) {
+        return `<div class="event-detail-row">${escapeHtml(row)}</div>`;
+      }
+
+      const label = row.slice(0, separator).trim();
+      const value = row.slice(separator + 1).trim();
+
+      return `
+        <div class="event-detail-row">
+          <strong>${escapeHtml(label)}:</strong>
+          <span>${escapeHtml(value || 'No especificado')}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
   function renderEvents(data) {
     let html = '';
     const events = data.events || [];
@@ -324,10 +349,10 @@ $(document).ready(function () {
               </div>
 
               <div class="event-content">
-                <strong>${escapeHtml(title)}</strong>
-                <small>${escapeHtml(event.timestamp || '')}</small>
-                <p>${escapeHtml(details)}</p>
-                <small><i class="fas fa-video"></i> ${escapeHtml(event.camera || 'Sin cámara')}</small>
+                <strong class="event-title">${escapeHtml(title)}</strong>
+                <small class="event-date"><strong>Fecha y hora:</strong> ${escapeHtml(event.timestamp || '')}</small>
+                <div class="event-details">${formatEventDetails(details)}</div>
+                <small class="event-camera"><i class="fas fa-video"></i> <strong>Cámara:</strong> ${escapeHtml(event.camera || 'Sin cámara')}</small>
               </div>
 
               <span class="event-priority">${escapeHtml(priority)}</span>
@@ -474,16 +499,36 @@ $(document).ready(function () {
     if (!box || !items || !items.length) return;
 
     items.forEach(it => {
-      const line = `[${it.ts}] ${it.msg}`;
-      box.innerHTML += escapeHtml(line) + '<br>';
+      const row = document.createElement('div');
+      const kind = ['danger', 'identity', 'success', 'info'].includes(it.kind)
+        ? it.kind
+        : 'info';
+      const textColors = {
+        danger: '#f87171',
+        identity: '#60a5fa',
+        success: '#4ade80',
+        info: '#cbd5e1'
+      };
+
+      row.className = `live-log-line live-log-line--${kind}`;
+      row.style.color = textColors[kind];
+
+      const time = document.createElement('span');
+      time.className = 'live-log-time';
+      time.textContent = `[${it.ts}]`;
+
+      const message = document.createElement('span');
+      message.className = 'live-log-message';
+      message.textContent = it.msg;
+
+      row.append(time, message);
+      box.appendChild(row);
     });
 
     box.scrollTop = box.scrollHeight;
 
-    const parts = box.innerHTML.split('<br>');
-
-    if (parts.length > 180) {
-      box.innerHTML = parts.slice(parts.length - 180).join('<br>');
+    while (box.children.length > 180) {
+      box.removeChild(box.firstElementChild);
     }
   }
 

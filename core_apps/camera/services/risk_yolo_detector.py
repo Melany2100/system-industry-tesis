@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import os
+import time
 from pathlib import Path
 from threading import Lock
 from typing import List, Tuple
@@ -135,6 +136,46 @@ class RiskYoloDetector:
         self.conf = getattr(settings, "RISK_YOLO_CONF", 0.55)
         self.imgsz = getattr(settings, "RISK_YOLO_IMGSZ", 640)
         self.classes = getattr(settings, "RISK_YOLO_CLASSES", None)
+        self._animal_memory = {}
+        self._scan_id = 0
+
+    @staticmethod
+    def _box_area(box):
+        x1, y1, x2, y2 = box
+        return max(0, x2 - x1) * max(0, y2 - y1)
+
+    @classmethod
+    def _animal_overlaps_person(cls, animal_box, person_boxes):
+        animal_area = cls._box_area(animal_box)
+        if animal_area <= 0:
+            return False
+
+        ax1, ay1, ax2, ay2 = animal_box
+        threshold = getattr(settings, "ANIMAL_PERSON_OVERLAP_RATIO", 0.35)
+
+        for px1, py1, px2, py2 in person_boxes:
+            ix1, iy1 = max(ax1, px1), max(ay1, py1)
+            ix2, iy2 = min(ax2, px2), min(ay2, py2)
+            intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            if intersection / float(animal_area) >= threshold:
+                return True
+
+        return False
+
+    def _confirm_animal(self, label, box):
+        center_x = (box[0] + box[2]) // 2
+        center_y = (box[1] + box[3]) // 2
+        key = f"{label}:{center_x // 120}:{center_y // 120}"
+        previous = self._animal_memory.get(key, {})
+        consecutive = previous.get("scan_id") == self._scan_id - 1
+        count = previous.get("count", 0) + 1 if consecutive else 1
+        self._animal_memory[key] = {
+            "count": count,
+            "scan_id": self._scan_id,
+            "last_seen": time.monotonic(),
+        }
+        required = max(1, getattr(settings, "ANIMAL_CONFIRMATION_FRAMES", 2))
+        return count >= required
 
     @classmethod
     def _load_model(cls):
@@ -145,6 +186,7 @@ class RiskYoloDetector:
 
     def detect(self, frame) -> List[RiskDetection]:
         detections = []
+        self._scan_id += 1
 
         with self._inference_lock:
             results = self.model.predict(
@@ -158,9 +200,20 @@ class RiskYoloDetector:
         if not results or results[0].boxes is None:
             return detections
 
+        raw_boxes = []
+        person_boxes = []
+
         for box in results[0].boxes:
             cls_id = int(box.cls[0])
             model_label = self.model.names[cls_id]
+            coordinates = tuple(map(int, box.xyxy[0].tolist()))
+            confidence = float(box.conf[0])
+            raw_boxes.append((model_label, confidence, coordinates))
+
+            if model_label == "person":
+                person_boxes.append(coordinates)
+
+        for model_label, confidence, coordinates in raw_boxes:
             internal_label = YOLO_LABEL_TO_INTERNAL.get(model_label)
 
             if not internal_label:
@@ -171,8 +224,7 @@ class RiskYoloDetector:
             if not rule:
                 continue
 
-            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-            confidence = float(box.conf[0])
+            x1, y1, x2, y2 = coordinates
             alert_conf = getattr(settings, "RISK_YOLO_ALERT_CONF", {}).get(
                 internal_label,
                 self.conf,
@@ -180,6 +232,12 @@ class RiskYoloDetector:
 
             if confidence < alert_conf:
                 continue
+
+            if internal_label in {"cat", "dog", "bird"}:
+                if self._animal_overlaps_person(coordinates, person_boxes):
+                    continue
+                if not self._confirm_animal(internal_label, coordinates):
+                    continue
 
             detections.append(
                 RiskDetection(

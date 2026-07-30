@@ -68,6 +68,7 @@ class VisionEventDetector:
         self.last_pose_events = []
         self.last_phone_boxes = []
         self.last_person_boxes = []
+        self.last_person_boxes_at = 0.0
         self.phone_usage_start = None
         self.last_phone_seen = None
         self.last_event_times = {}
@@ -305,7 +306,7 @@ class VisionEventDetector:
                     phone_boxes.append((x1, y1, x2, y2, confidence))
 
         self.last_person_boxes = person_boxes
-        self.last_phone_boxes = phone_boxes
+        self.last_person_boxes_at = time.monotonic()
 
         observed_phone_keys = set()
         matched_phone_indexes = set()
@@ -359,6 +360,9 @@ class VisionEventDetector:
             if phone_index in matched_phone_indexes:
                 continue
 
+            if getattr(settings, "PHONE_AREA_REQUIRES_PERSON", True):
+                continue
+
             phone_box = phone[:4]
             if phone[4] < getattr(settings, "PHONE_AREA_CONF", 0.65):
                 continue
@@ -394,6 +398,11 @@ class VisionEventDetector:
                 )
             )
 
+        self.last_phone_boxes = [
+            phone
+            for phone_index, phone in enumerate(phone_boxes)
+            if phone_index in matched_phone_indexes
+        ]
         self._prune_phone_usage(observed_phone_keys, now)
         self._prune_phone_area(observed_phone_keys, now)
         return events

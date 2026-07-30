@@ -1,6 +1,8 @@
 import re
 import uuid
+from threading import Thread
 
+from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -41,12 +43,115 @@ EVENT_REASON_LABELS = {
     "unauthorized_access": "Acceso no autorizado",
 }
 
+EVENT_PRESENTATION = {
+    "face_recognized": ("Persona identificada", "Control de acceso"),
+    "face_unknown": ("Persona no autorizada", "Control de acceso"),
+    "ppe_missing": ("Falta de EPP", "Falta de EPP"),
+    "intrusion": ("Persona no autorizada", "Intrusión"),
+    "authorized_object": ("Objeto autorizado", "Control de objetos"),
+    "unauthorized_object": ("Objeto no autorizado", "Objeto no autorizado"),
+    "dangerous_object": ("Objeto peligroso", "Objeto peligroso"),
+    "fall_detected": ("Posible caída", "Evento peligroso"),
+    "phone_usage": ("Uso de celular", "Objeto no autorizado"),
+    "collision_risk": ("Riesgo de choque", "Evento peligroso"),
+    "cut_risk": ("Riesgo de corte", "Evento peligroso"),
+    "unauthorized_access": ("Intrusión", "Acceso no autorizado"),
+}
+
+DETECTED_ITEM_LABELS = {
+    "mask": "mascarilla",
+    "no-mask": "mascarilla",
+    "gloves": "guantes",
+    "no-gloves": "guantes",
+    "earmuffs": "protectores auditivos",
+    "no-earmuffs": "protectores auditivos",
+    "safety glasses": "gafas de proteccion",
+    "no-safety glasses": "gafas de proteccion",
+    "hardhat": "casco",
+    "no-hardhat": "casco",
+    "safety vest": "chaleco de seguridad",
+    "no-safety vest": "chaleco de seguridad",
+    "backpack": "mochila",
+    "handbag": "bolso",
+    "suitcase": "maleta",
+    "cell_phone": "celular",
+    "bottle": "botella",
+    "knife": "cuchillo",
+    "scissors": "tijeras",
+}
+
 FIELD_MARKER_RE = re.compile(
     r"(?:^|\s*\|\s*)"
-    r"(Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona)"
+    r"(Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona|Estado|Evento adicional)"
     r"\s*:\s*",
     re.IGNORECASE,
 )
+
+
+PPE_EMAIL_DEFERRED_REASON = (
+    "Correo diferido hasta completar tres eventos de falta de EPP."
+)
+
+
+def _should_queue_incident_email(event):
+    """Agrupa las faltas de EPP y solicita un correo por cada bloque configurado."""
+    if event.event_type != "ppe_missing":
+        return True
+
+    required_events = max(
+        1,
+        int(getattr(settings, "PPE_EMAIL_EVERY_N_EVENTS", 3)),
+    )
+    if required_events == 1:
+        return True
+
+    previous_events = SecurityEvent.objects.filter(
+        event_type="ppe_missing",
+        camera_id=event.camera_id,
+        authorized_person_id=event.authorized_person_id,
+        related_user_id=event.related_user_id,
+        pk__lt=event.pk,
+    ).order_by("-pk")[:required_events - 1]
+
+    deferred_count = 0
+    for previous in previous_events:
+        if (
+            previous.email_status == "SKIPPED"
+            and previous.email_error == PPE_EMAIL_DEFERRED_REASON
+        ):
+            deferred_count += 1
+            continue
+        break
+
+    return deferred_count + 1 >= required_events
+
+
+def _apply_incident_email_policy(event):
+    if _should_queue_incident_email(event):
+        transaction.on_commit(lambda event_id=event.pk: _queue_incident_email(event_id))
+        return
+
+    event.email_status = "SKIPPED"
+    event.email_error = PPE_EMAIL_DEFERRED_REASON
+    event.save(update_fields=["email_status", "email_error"])
+
+
+def _send_incident_email_in_background(event_id):
+    """Envia el correo sin bloquear el hilo que captura y analiza video."""
+    try:
+        close_old_connections()
+        notify_incident_by_email(event_id)
+    finally:
+        close_old_connections()
+
+
+def _queue_incident_email(event_id):
+    Thread(
+        target=_send_incident_email_in_background,
+        args=(event_id,),
+        name=f"incident-email-{event_id}",
+        daemon=True,
+    ).start()
 
 
 try:
@@ -174,12 +279,96 @@ def _plain_person_name(user=None, authorized_person=None):
 def _extract_detail_field(text, field):
     pattern = re.compile(
         rf"(?:^|\s*\|\s*|\s+)(?:{field})\s*:\s*(.*?)(?=\s*(?:\|\s*)?"
-        r"(?:Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona)\s*:|$)",
+        r"(?:Motivo|Descripcion|Descripción|Categoria|Categoría|Nivel|Confianza|Persona|Estado|Evento adicional)\s*:|$)",
         re.IGNORECASE | re.DOTALL,
     )
     match = pattern.search(text or "")
 
     return match.group(1).strip() if match else ""
+
+
+def _translate_detected_items(value):
+    items = []
+
+    for raw_item in re.split(r"\s*,\s*", str(value or "")):
+        key = raw_item.strip().lower().replace("_", "-")
+        key = re.sub(r"[^a-z -]", "", key).strip()
+
+        if not key:
+            continue
+
+        items.append(DETECTED_ITEM_LABELS.get(key, key))
+
+    return ", ".join(dict.fromkeys(items))
+
+
+def _semantic_event_description(event_type, text):
+    if event_type == "ppe_missing":
+        # Los eventos se formatean al guardarse y nuevamente al enviarse a la
+        # interfaz. Si ya existe una descripción precisa, se debe conservar.
+        existing_description = _extract_detail_field(
+            text,
+            "Descripcion|Descripción",
+        )
+        is_legacy_description = re.search(
+            r"(?:Falta\s+(?:de\s+)?EPP|Indumentaria incorrecta)\s*:",
+            existing_description,
+            flags=re.IGNORECASE,
+        )
+        if existing_description and not is_legacy_description:
+            return existing_description.strip(" .|") + "."
+
+        match = re.search(
+            r"(?:Falta\s+(?:de\s+)?EPP|Indumentaria incorrecta)\s*:\s*"
+            r"(.*?)(?=\s*\||\s+(?:ALTO|MEDIO|BAJO|CRITICO)\b|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        missing_items = _translate_detected_items(match.group(1) if match else "")
+        if not missing_items:
+            return "Se detectó EPP incompleto."
+
+        item_count = len([item for item in missing_items.split(",") if item.strip()])
+        verb = "Falta" if item_count == 1 else "Faltan"
+        return f"{verb} {missing_items}."
+
+    if event_type in {"unauthorized_object", "dangerous_object", "authorized_object"}:
+        match = re.search(
+            r"(?:Objeto (?:no autorizado|peligroso|autorizado)(?: detectado)?|Botella detectada)\s*:\s*"
+            r"([^|.]+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match and "botella" in text.lower():
+            detected_item = "botella"
+        else:
+            detected_item = _translate_detected_items(match.group(1) if match else "")
+        return f"Se detectó {detected_item}." if detected_item else "Se detectó un objeto."
+
+    if event_type in {"intrusion", "face_unknown"}:
+        return "Se detectó una persona no autorizada."
+
+    if event_type == "face_recognized":
+        return "La persona fue identificada correctamente."
+
+    if event_type == "unauthorized_access":
+        lowered = text.lower()
+        if "gato" in lowered:
+            return "Se detectó un gato en el área monitoreada."
+        if "perro" in lowered or "animal" in lowered:
+            return "Se detectó un animal en el área monitoreada."
+        if "ave" in lowered:
+            return "Se detectó un ave en el área monitoreada."
+        return "Se detectó un acceso no autorizado."
+
+    if event_type == "phone_usage":
+        return "Se detectó el uso de un celular."
+
+    if event_type == "fall_detected":
+        return "Se detectó una posible caída."
+
+    description = _extract_detail_field(text, "Descripcion|Descripción") or text
+    return _professionalize_description("", description)
 
 
 def _remove_detail_metadata(text):
@@ -241,13 +430,14 @@ def format_security_event_details(event_type, details, user=None, authorized_per
     text = str(details or "").strip()
 
     event_labels = dict(SecurityEvent.EVENT_TYPES)
-    category = event_labels.get(event_type, event_type)
-    reason = _extract_detail_field(text, "Motivo") or EVENT_REASON_LABELS.get(event_type, category)
-    description = _extract_detail_field(text, "Descripcion|Descripción") or text
+    default_reason = EVENT_REASON_LABELS.get(event_type, event_labels.get(event_type, event_type))
+    reason, category = EVENT_PRESENTATION.get(
+        event_type,
+        (default_reason, event_labels.get(event_type, event_type)),
+    )
     confidence = _extract_detail_field(text, "Confianza")
-
-    if event_type == "ppe_missing" and "Indumentaria incorrecta" in description:
-        reason = "Indumentaria incorrecta"
+    state = _extract_detail_field(text, "Estado")
+    additional_event = _extract_detail_field(text, "Evento adicional")
 
     person = _plain_person_name(user=user, authorized_person=authorized_person)
     parsed_person = _extract_detail_field(text, "Persona")
@@ -255,20 +445,38 @@ def format_security_event_details(event_type, details, user=None, authorized_per
     if person == "Desconocido/a" and parsed_person:
         person = parsed_person
 
-    if person.strip().lower() in {"persona no identificada", "no identificado", "desconocido"}:
+    if person.strip().lower() in {
+        "persona no identificada",
+        "person no identificada",
+        "no identificado",
+        "desconocido",
+    }:
         person = "Desconocido/a"
-    formatted_description = _professionalize_description(
-        reason,
-        description,
-        confidence=confidence,
-    )
 
-    return (
-        f"Motivo: {reason}\n"
-        f"Descripcion: {formatted_description}\n"
-        f"Categoria: {category}\n"
-        f"Persona: {person}"
-    )
+    lines = [
+        f"Motivo: {reason}",
+        f"Descripcion: {_semantic_event_description(event_type, text)}",
+        f"Categoria: {category}",
+        f"Persona: {person}",
+    ]
+
+    if state:
+        lines.append(f"Estado: {state.strip(' .|')}")
+
+    if additional_event:
+        additional_description = _semantic_event_description(
+            "unauthorized_access",
+            additional_event,
+        )
+        lines.append(f"Evento adicional: {additional_description}")
+
+    if confidence:
+        confidence_match = re.search(r"\d+(?:\.\d+)?", confidence)
+        lines.append(
+            f"Confianza: {confidence_match.group(0) if confidence_match else confidence}"
+        )
+
+    return "\n".join(lines)
 
 
 def create_security_event(
@@ -327,7 +535,7 @@ def create_security_event(
                 descripcion=f"{event.get_event_type_display()}: {formatted_details}",
                 evidencia=image_path
             )
-            transaction.on_commit(lambda: notify_incident_by_email(event.pk))
+            _apply_incident_email_policy(event)
 
         return event
 

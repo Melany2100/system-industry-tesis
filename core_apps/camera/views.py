@@ -29,7 +29,12 @@ from django.views.generic import TemplateView
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .models import AuthorizedPerson, SecurityEvent, Camera
-from core_apps.camera.utils import create_security_event, can_save_event, save_authorized_face_image
+from core_apps.camera.utils import (
+    can_save_event,
+    create_security_event,
+    format_security_event_details,
+    save_authorized_face_image,
+)
 from core_apps.common.permissions import get_authorized_person_for_user, is_admin_user
 
 # =========================
@@ -191,7 +196,12 @@ def _event_payload(
         "id": event.id,
         "event_type": event.event_type,
         "event_type_display": event.get_event_type_display(),
-        "details": event.details,
+        "details": format_security_event_details(
+            event.event_type,
+            event.details,
+            user=event.related_user,
+            authorized_person=event.authorized_person,
+        ),
         "timestamp": _format_local_datetime(event.timestamp),
         "severity": level,
         "resolved": event.resolved,
@@ -341,16 +351,38 @@ FACE_OVERLAP_THRESHOLD = 0.20
 
 PPE_INFERENCE_IMGSZ = getattr(settings, "PPE_INFERENCE_IMGSZ", 960)
 PPE_MODEL_CONFIDENCE = getattr(settings, "PPE_MODEL_CONFIDENCE", 0.25)
-PPE_CONFIRMATION_FRAMES = 2
+PPE_CONFIRMATION_FRAMES = max(
+    1,
+    int(getattr(settings, "PPE_CONFIRMATION_FRAMES", 2)),
+)
 PPE_ITEM_OVERLAP_THRESHOLD = 0.10
 PPE_VIOLATION_TTL_SECONDS = 6.0
-PPE_REQUIRED_ITEMS = ("mask", "gloves", "earmuffs")
+# Elementos exigidos por el modelo SH17 integrado en camera/ppe.pt.
+PPE_REQUIRED_ITEMS = (
+    "mask",
+    "gloves",
+    "earmuffs",
+    "hardhat",
+    "safety glasses",
+)
+PPE_ITEM_DISPLAY_NAMES = {
+    "mask": "mascarilla",
+    "gloves": "guantes",
+    "earmuffs": "protectores auditivos",
+    "hardhat": "casco",
+    "safety glasses": "gafas de proteccion",
+}
 PPE_CLASS_CONFIDENCE = {
     "person": getattr(settings, "PPE_PERSON_CONFIDENCE", 0.45),
-    "hardhat": 0.45,
+    "hardhat": getattr(settings, "PPE_HARDHAT_CONFIDENCE", 0.35),
     "mask": getattr(settings, "PPE_MASK_CONFIDENCE", 0.40),
-    "gloves": 0.45,
-    "earmuffs": 0.45,
+    "gloves": getattr(settings, "PPE_GLOVES_CONFIDENCE", 0.30),
+    "earmuffs": getattr(settings, "PPE_EARMUFFS_CONFIDENCE", 0.20),
+    "safety glasses": getattr(
+        settings,
+        "PPE_SAFETY_GLASSES_CONFIDENCE",
+        0.25,
+    ),
     "safety vest": 0.45,
     "no-hardhat": 0.65,
     "no-mask": getattr(settings, "PPE_NO_MASK_CONFIDENCE", 0.65),
@@ -426,12 +458,116 @@ def _box_center(box):
 
 
 def _normalize_ppe_label(label) -> str:
-    return str(label).strip().lower().replace("_", "-")
+    normalized = str(label).strip().lower().replace("_", "-")
+    aliases = {
+        # Nombres publicados por el modelo SH17.
+        "face-mask": "mask",
+        "face-mask-medical": "mask",
+        "helmet": "hardhat",
+        "glasses": "safety glasses",
+        "goggles": "safety glasses",
+        "ear-mufs": "earmuffs",
+        "ear-muffs": "earmuffs",
+        # Variantes habituales de otros modelos PPE compatibles.
+        "safety-glasses": "safety glasses",
+        "no-helmet": "no-hardhat",
+        "no-glasses": "no-safety glasses",
+        "no-goggles": "no-safety glasses",
+        "no-ear-mufs": "no-earmuffs",
+        "no-ear-muffs": "no-earmuffs",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _passes_ppe_confidence(label: str, confidence: float) -> bool:
     min_confidence = PPE_CLASS_CONFIDENCE.get(label, 0.55)
     return confidence >= min_confidence
+
+
+def _is_valid_ppe_person(frame_shape, person_box, confidence: float) -> bool:
+    """Descarta falsas personas antes de evaluar si les falta EPP."""
+    if not _passes_ppe_confidence("person", confidence):
+        return False
+
+    frame_height, frame_width = frame_shape[:2]
+    if frame_height <= 0 or frame_width <= 0:
+        return False
+
+    x1, y1, x2, y2 = person_box
+    width = max(0, x2 - x1)
+    height = max(0, y2 - y1)
+    frame_area = float(frame_width * frame_height)
+
+    if width <= 0 or height <= 0:
+        return False
+
+    area_ratio = (width * height) / frame_area
+    height_ratio = height / float(frame_height)
+    aspect_ratio = height / float(width)
+
+    return (
+        area_ratio >= getattr(settings, "PPE_PERSON_MIN_AREA_RATIO", 0.06)
+        and height_ratio >= getattr(settings, "PPE_PERSON_MIN_HEIGHT_RATIO", 0.30)
+        and aspect_ratio >= getattr(settings, "PPE_PERSON_MIN_ASPECT_RATIO", 0.75)
+    )
+
+
+def _is_ppe_person_corroborated(
+    person_box,
+    vision_event_detector,
+    detected_faces,
+    now,
+) -> bool:
+    """Exige otra evidencia humana existente antes de generar falta de EPP."""
+    for face in detected_faces or []:
+        face_box = face.get("coords")
+        last_seen = face.get("last_seen", 0.0)
+
+        if not face_box or now - last_seen > FACE_MEMORY_SECONDS:
+            continue
+
+        face_cx, face_cy = _box_center(face_box)
+        px1, py1, px2, py2 = person_box
+        if px1 <= face_cx <= px2 and py1 <= face_cy <= py2:
+            return True
+
+    if vision_event_detector is None:
+        return False
+
+    boxes_at = float(getattr(vision_event_detector, "last_person_boxes_at", 0.0) or 0.0)
+    ttl = getattr(settings, "PPE_PERSON_CORROBORATION_TTL_SECONDS", 3.0)
+    if not boxes_at or now - boxes_at > ttl:
+        return False
+
+    min_confidence = getattr(
+        settings,
+        "PPE_PERSON_CORROBORATION_CONFIDENCE",
+        0.55,
+    )
+    person_area = _box_area(person_box)
+
+    for candidate in getattr(vision_event_detector, "last_person_boxes", []) or []:
+        candidate_box = tuple(candidate[:4])
+        candidate_confidence = float(candidate[4]) if len(candidate) > 4 else 0.0
+
+        if candidate_confidence < min_confidence:
+            continue
+
+        candidate_area = _box_area(candidate_box)
+        smaller_area = min(person_area, candidate_area)
+        if smaller_area <= 0:
+            continue
+
+        overlap_ratio = _intersection_area(person_box, candidate_box) / float(smaller_area)
+        candidate_cx, candidate_cy = _box_center(candidate_box)
+        px1, py1, px2, py2 = person_box
+
+        if overlap_ratio >= 0.30 or (
+            px1 <= candidate_cx <= px2 and py1 <= candidate_cy <= py2
+        ):
+            return True
+
+    return False
 
 
 def _get_supported_required_ppe_items(names) -> tuple[str, ...]:
@@ -444,6 +580,16 @@ def _get_supported_required_ppe_items(names) -> tuple[str, ...]:
         item for item in PPE_REQUIRED_ITEMS
         if item in model_labels or f"no-{item}" in model_labels
     )
+
+
+def _get_missing_ppe_items(present_items, required_items) -> tuple[str, ...]:
+    """Devuelve, en orden, únicamente el EPP ausente de una persona."""
+    present = {
+        _normalize_ppe_label(item)
+        for item in (present_items or ())
+        if not _normalize_ppe_label(item).startswith("no-")
+    }
+    return tuple(item for item in required_items if item not in present)
 
 
 def _is_ppe_item_inside_person(person_box, item_box) -> bool:
@@ -623,6 +769,82 @@ def _get_identity_text(identity):
 
     return "Desconocido", "No autorizado", None
 
+
+LIVE_LOG_TRANSLATIONS = {
+    "FACE": "PERSONA",
+    "PPE": "EPP",
+    "OBJ": "OBJETO",
+    "PHONE": "CELULAR",
+    "bottle": "botella",
+    "backpack": "mochila",
+    "handbag": "bolso",
+    "suitcase": "maleta",
+    "cell_phone": "celular",
+    "knife": "cuchillo",
+    "scissors": "tijeras",
+    "person": "persona",
+    "mask": "mascarilla",
+    "gloves": "guantes",
+    "earmuffs": "protectores auditivos",
+    "hardhat": "casco",
+    "safety glasses": "gafas de proteccion",
+    "cat": "gato",
+    "dog": "perro",
+    "bird": "ave",
+}
+
+
+def _clean_live_log_message(message: str) -> str:
+    text = str(message or "")
+
+    # Elimina emojis y secuencias mojibake que aparecian como âœ…, âŒ o âš .
+    text = re.sub(r"(?:â[^\s]{0,3}|[✅❌⚠️🟢🟠🔴])\s*", "", text)
+
+    for source, translated in LIVE_LOG_TRANSLATIONS.items():
+        text = re.sub(
+            rf"(?<![\w]){re.escape(source)}(?![\w])",
+            translated,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    text = text.replace("model cargado", "modelo cargado")
+    text = text.replace("Streaming iniciado", "Transmision iniciada")
+    text = text.replace("Streaming detenido", "Transmision detenida")
+    text = text.replace("No existe", "No se encontro")
+    return " ".join(text.split())
+
+
+def _live_log_kind(message: str) -> str:
+    normalized = str(message or "").lower()
+
+    if any(term in normalized for term in (
+        "falta epp",
+        "indumentaria incorrecta",
+        "no autorizad",
+        "objeto peligroso",
+        "intrusion",
+        "error",
+        "no se pudo",
+    )):
+        return "danger"
+
+    if any(term in normalized for term in (
+        "epp ok",
+        "epp correcto",
+        "indumentaria correcta",
+    )):
+        return "success"
+
+    if any(term in normalized for term in (
+        "autorizado:",
+        "persona identificada",
+        "rostro reconocido",
+    )):
+        return "identity"
+
+    return "info"
+
 def _log_line(message: str, key: str | None = None, throttle_sec: float = 0.0) -> None:
     global _LOG_SEQ
     now = time.monotonic()
@@ -634,10 +856,17 @@ def _log_line(message: str, key: str | None = None, throttle_sec: float = 0.0) -
         _LAST_LOG_TS[key] = now
 
     ts = timezone.localtime().strftime("%H:%M:%S")
+    clean_message = _clean_live_log_message(message)
+    kind = _live_log_kind(clean_message)
 
     with _LOG_LOCK:
         _LOG_SEQ += 1
-        _LIVE_LOG.append({"id": _LOG_SEQ, "ts": ts, "msg": message})
+        _LIVE_LOG.append({
+            "id": _LOG_SEQ,
+            "ts": ts,
+            "msg": clean_message,
+            "kind": kind,
+        })
 
 
 def live_status(request):
@@ -899,11 +1128,76 @@ def _bounded_camera_fps(value=None) -> int:
     return max(min_fps, min(requested_fps, max_fps))
 
 
-def _open_local_camera(cv2, camera_source: int, camera_name: str):
+def _resize_frame_to_width(cv2_module, frame, target_width):
+    if frame is None or not getattr(frame, "size", 0):
+        return frame
+
+    height, width = frame.shape[:2]
+    target_width = max(1, int(target_width))
+    if width <= target_width:
+        return frame
+
+    target_height = max(1, int(round(height * target_width / float(width))))
+    return cv2_module.resize(
+        frame,
+        (target_width, target_height),
+        interpolation=cv2_module.INTER_AREA,
+    )
+
+
+def _scale_box_between_frames(box, source_shape, target_shape):
+    source_height, source_width = source_shape[:2]
+    target_height, target_width = target_shape[:2]
+    if source_width <= 0 or source_height <= 0:
+        return tuple(map(int, box))
+
+    scale_x = target_width / float(source_width)
+    scale_y = target_height / float(source_height)
+    x1, y1, x2, y2 = box
+    return (
+        int(round(x1 * scale_x)),
+        int(round(y1 * scale_y)),
+        int(round(x2 * scale_x)),
+        int(round(y2 * scale_y)),
+    )
+
+
+def _rtsp_stream_sources(source):
+    """Obtiene substream para vista y main stream para analisis en camaras VIGI."""
+    source = str(source or "").strip()
+    if (
+        not source.lower().startswith("rtsp://")
+        or not getattr(settings, "RTSP_DUAL_STREAM_ENABLED", True)
+    ):
+        return source, None
+
+    main_name = str(getattr(settings, "RTSP_MAIN_STREAM_NAME", "stream1"))
+    sub_name = str(getattr(settings, "RTSP_SUB_STREAM_NAME", "stream2"))
+    stream_pattern = re.compile(
+        rf"/(?:{re.escape(main_name)}|{re.escape(sub_name)})(?=$|\?)",
+        flags=re.IGNORECASE,
+    )
+    if not stream_pattern.search(source):
+        return source, None
+
+    preview_source = stream_pattern.sub(f"/{sub_name}", source, count=1)
+    analysis_source = stream_pattern.sub(f"/{main_name}", source, count=1)
+    if preview_source == analysis_source:
+        return preview_source, None
+    return preview_source, analysis_source
+
+
+def _open_rtsp_camera(cv2_module, source):
+    cap = cv2_module.VideoCapture(source, cv2_module.CAP_FFMPEG)
+    cap.set(cv2_module.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
+def _open_local_camera(cv2, camera_source: int, camera_name: str, target_fps: int):
     if os.name == "nt":
         backend_candidates = [
-            ("MSMF", getattr(cv2, "CAP_MSMF", None)),
             ("DSHOW", getattr(cv2, "CAP_DSHOW", None)),
+            ("MSMF", getattr(cv2, "CAP_MSMF", None)),
             ("DEFAULT", None),
         ]
     else:
@@ -915,13 +1209,37 @@ def _open_local_camera(cv2, camera_source: int, camera_name: str):
         else:
             cap = cv2.VideoCapture(camera_source, backend)
 
+        fourcc_name = str(getattr(settings, "LOCAL_CAMERA_FOURCC", "MJPG"))[:4]
+        if len(fourcc_name) == 4:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc_name))
+        cap.set(
+            cv2.CAP_PROP_FRAME_WIDTH,
+            max(640, int(getattr(settings, "LOCAL_CAMERA_CAPTURE_WIDTH", 1920))),
+        )
+        cap.set(
+            cv2.CAP_PROP_FRAME_HEIGHT,
+            max(480, int(getattr(settings, "LOCAL_CAMERA_CAPTURE_HEIGHT", 1080))),
+        )
+        cap.set(
+            cv2.CAP_PROP_FPS,
+            max(
+                int(target_fps),
+                int(getattr(settings, "LOCAL_CAMERA_CAPTURE_FPS", 15)),
+            ),
+        )
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened():
             cap.release()
             continue
 
-        ok, frame = cap.read()
+        ok, frame = False, None
+        warmup_deadline = time.monotonic() + 1.5
+        while time.monotonic() < warmup_deadline:
+            ok, frame = cap.read()
+            if ok and frame is not None and getattr(frame, "size", 0):
+                break
+            time.sleep(0.03)
 
         if ok and frame is not None and getattr(frame, "size", 0):
             _log_line(
@@ -951,13 +1269,17 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     face_rec = None
     models_attached = False
 
+    target_fps = _bounded_camera_fps(target_fps)
     camera_source = camera.get_video_source()
     camera_name = camera.nombre
+    is_local_camera = isinstance(camera_source, int)
+    analysis_cap = None
+    analysis_reader = None
 
-    if isinstance(camera_source, int):
+    if is_local_camera:
         # Camara local tipo webcam. En Windows algunos backends abren el
         # dispositivo pero devuelven frames corruptos, por eso se prueban varios.
-        cap = _open_local_camera(cv2, camera_source, camera_name)
+        cap = _open_local_camera(cv2, camera_source, camera_name, target_fps)
     else:
         # CÃ¡mara IP / RTSP
         camera_source = str(camera_source).strip()
@@ -971,20 +1293,41 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                 f"rtsp_transport;{rtsp_transport}|max_delay;100000|fflags;nobuffer|flags;low_delay"
             )
 
-        cap = cv2.VideoCapture(camera_source, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        preview_source, analysis_source = _rtsp_stream_sources(camera_source)
+        cap = _open_rtsp_camera(cv2, preview_source)
+
+        if analysis_source:
+            analysis_cap = _open_rtsp_camera(cv2, analysis_source)
+            if analysis_cap.isOpened():
+                analysis_reader = LatestFrameReader(
+                    analysis_cap,
+                    f"{camera_name}-alta-resolucion",
+                )
+                analysis_reader.start()
+                _log_line(
+                    f"Doble flujo RTSP activo: {camera_name}",
+                    key=f"dual_stream_{camera.id}",
+                    throttle_sec=10,
+                )
+            else:
+                analysis_cap.release()
+                analysis_cap = None
+                _log_line(
+                    f"Flujo principal no disponible; usando flujo normal: {camera_name}",
+                    key=f"dual_stream_fallback_{camera.id}",
+                    throttle_sec=10,
+                )
 
     if cap is None or not cap.isOpened():
+        if analysis_reader is not None:
+            analysis_reader.stop()
+        if analysis_cap is not None:
+            analysis_cap.release()
         _log_line(f"âŒ No se pudo abrir la cÃ¡mara: {camera_name}", key=f"cam_fail_{camera.id}", throttle_sec=10)
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    latest_reader = None
-
-    if not isinstance(camera_source, int):
-        latest_reader = LatestFrameReader(cap, camera_name)
-        latest_reader.start()
+    latest_reader = LatestFrameReader(cap, camera_name)
+    latest_reader.start()
 
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
@@ -1001,7 +1344,6 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     frame_counter = 0
     last_ppe_event_frame = -999
 
-    target_fps = _bounded_camera_fps(target_fps)
     risk_yolo_frame_interval = max(1, int(getattr(settings, "RISK_YOLO_FRAME_INTERVAL", 3)))
     face_recognition_frame_interval = max(1, int(getattr(settings, "FACE_RECOGNITION_FRAME_INTERVAL", 12)))
     face_detection_frame_interval = max(1, int(getattr(settings, "FACE_DETECTION_FRAME_INTERVAL", 8)))
@@ -1009,6 +1351,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     frame_interval = 1.0 / float(target_fps)
     next_frame_at = time.monotonic()
     first_no_frame_at = None
+    source_resolution_logged = False
 
     _log_line(
         f"ðŸŸ¢ Streaming iniciado: {camera_name} (fps={target_fps})",
@@ -1054,12 +1397,9 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             next_frame_at = max(next_frame_at + frame_interval, time.monotonic() + 0.001)
 
             # Para cÃ¡maras RTSP, intentamos descartar frames viejos acumulados
-            if latest_reader is not None:
-                ok, frame = latest_reader.get_latest(
-                    max_age_seconds=getattr(settings, "RTSP_STALE_FRAME_SECONDS", 8)
-                )
-            else:
-                ok, frame = cap.read()
+            ok, frame = latest_reader.get_latest(
+                max_age_seconds=getattr(settings, "RTSP_STALE_FRAME_SECONDS", 8)
+            )
 
             if not ok:
                 if first_no_frame_at is None:
@@ -1084,25 +1424,52 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
             first_no_frame_at = None
 
+            high_resolution_frame = frame
+            if analysis_reader is not None:
+                high_res_ok, high_res_candidate = analysis_reader.get_latest(
+                    max_age_seconds=getattr(
+                        settings,
+                        "RTSP_HIGH_RES_STALE_FRAME_SECONDS",
+                        3.0,
+                    )
+                )
+                if high_res_ok:
+                    high_resolution_frame = high_res_candidate
+
+            # La fuente puede capturarse a 1080p/4MP, pero la vista y los
+            # detectores generales conservan un cuadro ligero.
+            frame = _resize_frame_to_width(
+                cv2,
+                frame,
+                getattr(settings, "LIVE_VIDEO_FRAME_WIDTH", 640),
+            )
+
+            evidence_frame = high_resolution_frame
+            if not source_resolution_logged:
+                source_height, source_width = high_resolution_frame.shape[:2]
+                _log_line(
+                    f"Resolucion de analisis [{camera_name}]: "
+                    f"{source_width}x{source_height} | vista en vivo: "
+                    f"{frame.shape[1]}x{frame.shape[0]}",
+                    key=f"camera_resolution_{camera.id}",
+                )
+                source_resolution_logged = True
             frame_counter += 1
 
-            if emit_jpeg is not None:
-                preview_ok, preview_buffer = cv2.imencode(
-                    ".jpg",
-                    frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), 60],
-                )
-
-                if preview_ok:
-                    emit_jpeg(preview_buffer.tobytes())
-
             frame_height, frame_width = frame.shape[:2]
+            detail_height, detail_width = high_resolution_frame.shape[:2]
             face_analysis_width = min(
-                frame_width,
+                detail_width,
                 max(320, int(getattr(settings, "FACE_ANALYSIS_WIDTH", 480))),
             )
-            face_analysis_height = max(1, int(frame_height * (face_analysis_width / frame_width)))
-            small_frame = cv2.resize(frame, (face_analysis_width, face_analysis_height))
+            face_analysis_height = max(
+                1,
+                int(detail_height * (face_analysis_width / detail_width)),
+            )
+            small_frame = cv2.resize(
+                high_resolution_frame,
+                (face_analysis_width, face_analysis_height),
+            )
             face_scale_x = frame_width / float(face_analysis_width)
             face_scale_y = frame_height / float(face_analysis_height)
 
@@ -1263,7 +1630,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                     create_security_event(
                                         event_type="intrusion",
                                         details="Persona no autorizada detectada en el Ã¡rea monitoreada",
-                                        frame=frame.copy(),
+                                        frame=evidence_frame.copy(),
                                         camera=camera,
                                         epp_correcto=False,
                                         severity="ALTO",
@@ -1335,8 +1702,9 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             }
                         else:
                             risk_log_message = (
-                                f"OBJ [{camera_name}]: {detection.internal_label} "
-                                f"({detection.confidence:.2f}) | Nivel {detection.severity}"
+                                f"OBJETO [{camera_name}]: {detection.message} "
+                                f"({detection.confidence:.2f}) | Categoria: "
+                                f"{detection.category} | Nivel: {detection.severity}"
                             )
 
                         _log_line(
@@ -1363,7 +1731,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             create_security_event(
                                 event_type=detection.event_type,
                                 details=details,
-                                frame=frame.copy(),
+                                frame=evidence_frame.copy(),
                                 user=None,
                                 camera=camera,
                                 epp_correcto=False,
@@ -1467,7 +1835,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             create_security_event(
                                 event_type=event.event_type,
                                 details=event.details,
-                                frame=frame.copy(),
+                                frame=evidence_frame.copy(),
                                 user=None,
                                 camera=camera,
                                 authorized_person=event.authorized_person,
@@ -1494,9 +1862,10 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             # PPE
             if ppe_model is not None and frame_counter % ppe_frame_interval == 0:
                 try:
+                    ppe_source_frame = high_resolution_frame
                     with _PPE_INFERENCE_LOCK:
                         res = ppe_model(
-                            frame,
+                            ppe_source_frame,
                             verbose=False,
                             imgsz=PPE_INFERENCE_IMGSZ,
                             conf=PPE_MODEL_CONFIDENCE,
@@ -1513,17 +1882,35 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         cls_id = int(b.cls[0])
                         label = _normalize_ppe_label(names.get(cls_id, cls_id))
                         conf = float(b.conf[0])
-                        x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
+                        source_box = tuple(map(int, b.xyxy[0].tolist()))
+                        x1, y1, x2, y2 = _scale_box_between_frames(
+                            source_box,
+                            ppe_source_frame.shape,
+                            frame.shape,
+                        )
 
                         if not _passes_ppe_confidence(label, conf):
                             continue
 
                         if label == "person":
-                            persons.append((x1, y1, x2, y2, conf))
+                            if _is_valid_ppe_person(
+                                frame.shape,
+                                (x1, y1, x2, y2),
+                                conf,
+                            ):
+                                persons.append((x1, y1, x2, y2, conf))
                         else:
                             items.append((label, conf, x1, y1, x2, y2))
 
                     for (px1, py1, px2, py2, _person_conf) in persons:
+                        if not _is_ppe_person_corroborated(
+                            (px1, py1, px2, py2),
+                            vision_event_detector,
+                            last_detected_faces,
+                            now,
+                        ):
+                            continue
+
                         identity = _match_identity_to_person_box(
                             (px1, py1, px2, py2),
                             last_detected_faces
@@ -1605,7 +1992,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 create_security_event(
                                     event_type="ppe_missing",
                                     details=msg,
-                                    frame=frame.copy(),
+                                    frame=evidence_frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
@@ -1626,14 +2013,17 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                             continue
 
-                        missing = []
-
-                        for required_item in supported_required_ppe_items:
-                            if required_item not in present:
-                                missing.append(required_item)
+                        missing = _get_missing_ppe_items(
+                            present,
+                            supported_required_ppe_items,
+                        )
 
                         if missing:
-                            base_msg = f"âš  Falta EPP: {', '.join(missing)}"
+                            missing_description = ", ".join(
+                                PPE_ITEM_DISPLAY_NAMES.get(item, item)
+                                for item in missing
+                            )
+                            base_msg = f"âš  Falta EPP: {missing_description}"
                             msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
                             animal_context = recent_area_context.get("animal")
                             if animal_context and now - animal_context.get("last_seen", 0.0) <= 10.0:
@@ -1687,7 +2077,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 create_security_event(
                                     event_type="ppe_missing",
                                     details=msg,
-                                    frame=frame.copy(),
+                                    frame=evidence_frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
@@ -1749,8 +2139,12 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     finally:
         if latest_reader is not None:
             latest_reader.stop()
+        if analysis_reader is not None:
+            analysis_reader.stop()
 
         cap.release()
+        if analysis_cap is not None:
+            analysis_cap.release()
 
         _log_line(
             f"ðŸŸ  Streaming detenido: {camera_name}",

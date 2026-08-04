@@ -152,30 +152,43 @@ class VisionEventDetector:
         events = []
         now = time.time()
         observed_keys = set()
+        candidates = {}
 
-        with self._inference_lock:
-            results = self.object_model.predict(
-                source=frame,
-                conf=getattr(settings, "SHARP_OBJECT_CONF", 0.20),
-                imgsz=getattr(settings, "SHARP_OBJECT_IMGSZ", 960),
-                classes=getattr(settings, "SHARP_OBJECT_CLASSES", [43, 76]),
-                verbose=False,
-            )
+        for source, offset_x, offset_y in self._sharp_prediction_sources(frame):
+            with self._inference_lock:
+                results = self.object_model.predict(
+                    source=source,
+                    conf=getattr(settings, "SHARP_OBJECT_CONF", 0.20),
+                    imgsz=getattr(settings, "SHARP_OBJECT_IMGSZ", 960),
+                    classes=getattr(settings, "SHARP_OBJECT_CLASSES", [43, 76]),
+                    verbose=False,
+                )
 
-        if not results or results[0].boxes is None:
-            return events
-
-        for box in results[0].boxes:
-            cls_id = int(box.cls[0])
-            label = self.object_model.names[cls_id]
-            confidence = float(box.conf[0])
-            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-            alert_conf = self._sharp_alert_conf(label)
-
-            if confidence < alert_conf:
+            if not results or results[0].boxes is None:
                 continue
 
-            event_key = self._sharp_detection_key(label, (x1, y1, x2, y2))
+            for box in results[0].boxes:
+                cls_id = int(box.cls[0])
+                label = self.object_model.names[cls_id]
+                confidence = float(box.conf[0])
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                mapped_box = (
+                    x1 + offset_x,
+                    y1 + offset_y,
+                    x2 + offset_x,
+                    y2 + offset_y,
+                )
+
+                if confidence < self._sharp_alert_conf(label):
+                    continue
+
+                event_key = self._sharp_detection_key(label, mapped_box)
+                previous = candidates.get(event_key)
+                if previous is None or confidence > previous[1]:
+                    candidates[event_key] = (label, confidence, mapped_box)
+
+        for event_key, (label, confidence, detected_box) in candidates.items():
+            x1, y1, x2, y2 = detected_box
             observed_keys.add(event_key)
             confirmation_count = self._track_sharp_detection(event_key, now)
             is_confirmed = confirmation_count >= getattr(
@@ -204,6 +217,35 @@ class VisionEventDetector:
 
         self._prune_sharp_detections(observed_keys, now)
         return events
+
+    def _sharp_prediction_sources(self, frame):
+        """Devuelve el cuadro completo y recortes ampliados de personas.
+
+        El recorte hace que objetos pequenos sostenidos en las manos, como una
+        tijera distante, tengan muchos mas pixeles durante la inferencia.
+        """
+        sources = [(frame, 0, 0)]
+        if not getattr(settings, "SHARP_PERSON_CROP_ENABLED", True):
+            return sources
+
+        max_age = getattr(settings, "SHARP_PERSON_CROP_MAX_AGE_SECONDS", 3.0)
+        if time.monotonic() - self.last_person_boxes_at > max_age:
+            return sources
+
+        frame_height, frame_width = frame.shape[:2]
+        expand_ratio = getattr(settings, "SHARP_PERSON_CROP_EXPAND_RATIO", 0.30)
+
+        for person in self.last_person_boxes:
+            x1, y1, x2, y2 = self._expand_box(person[:4], expand_ratio)
+            x1 = max(0, int(x1))
+            y1 = max(0, int(y1))
+            x2 = min(frame_width, int(x2))
+            y2 = min(frame_height, int(y2))
+            if x2 - x1 < 32 or y2 - y1 < 32:
+                continue
+            sources.append((frame[y1:y2, x1:x2], x1, y1))
+
+        return sources
 
     def _detect_fall(self, frame, identities=None) -> List[VisionEvent]:
         events = []

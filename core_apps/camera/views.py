@@ -341,7 +341,6 @@ def _filtered_security_events_queryset(request):
     return queryset.order_by("-timestamp")
 
 
-
 # =========================
 # Helpers de identidad y asociaciÃ³n rostro/persona
 # =========================
@@ -353,24 +352,33 @@ PPE_INFERENCE_IMGSZ = getattr(settings, "PPE_INFERENCE_IMGSZ", 960)
 PPE_MODEL_CONFIDENCE = getattr(settings, "PPE_MODEL_CONFIDENCE", 0.25)
 PPE_CONFIRMATION_FRAMES = max(
     1,
-    int(getattr(settings, "PPE_CONFIRMATION_FRAMES", 2)),
+    int(getattr(settings, "PPE_CONFIRMATION_FRAMES", 3)),
 )
 PPE_ITEM_OVERLAP_THRESHOLD = 0.10
-PPE_VIOLATION_TTL_SECONDS = 6.0
-# Elementos exigidos por el modelo SH17 integrado en camera/ppe.pt.
+# Cada EPP se comprueba por turnos. El contador debe sobrevivir al ciclo
+# mascarilla -> guantes -> gafas para poder alcanzar las tres confirmaciones.
+PPE_VIOLATION_TTL_SECONDS = 20.0
+# Elementos exigidos por el modelo PPE SH17 configurado en PPE_MODEL_PATH.
 PPE_REQUIRED_ITEMS = (
     "mask",
     "gloves",
-    "earmuffs",
-    "hardhat",
     "safety glasses",
 )
 PPE_ITEM_DISPLAY_NAMES = {
     "mask": "mascarilla",
     "gloves": "guantes",
-    "earmuffs": "protectores auditivos",
-    "hardhat": "casco",
     "safety glasses": "gafas de proteccion",
+}
+PPE_ITEM_SEVERITIES = {
+    "mask": "ALTO",
+    "gloves": "MEDIO",
+    "safety glasses": "MEDIO",
+}
+PPE_SEVERITY_RANK = {"BAJO": 1, "MEDIO": 2, "ALTO": 3, "CRITICO": 4}
+PPE_SEVERITY_COLORS = {
+    "BAJO": (0, 200, 0),
+    "MEDIO": (0, 165, 255),
+    "ALTO": (0, 0, 255),
 }
 PPE_CLASS_CONFIDENCE = {
     "person": getattr(settings, "PPE_PERSON_CONFIDENCE", 0.45),
@@ -468,6 +476,10 @@ def _normalize_ppe_label(label) -> str:
         "goggles": "safety glasses",
         "ear-mufs": "earmuffs",
         "ear-muffs": "earmuffs",
+        "headphones": "earmuffs",
+        "headphone": "earmuffs",
+        "headset": "earmuffs",
+        "earphones": "earmuffs",
         # Variantes habituales de otros modelos PPE compatibles.
         "safety-glasses": "safety glasses",
         "no-helmet": "no-hardhat",
@@ -570,14 +582,15 @@ def _is_ppe_person_corroborated(
     return False
 
 
-def _get_supported_required_ppe_items(names) -> tuple[str, ...]:
+def _get_supported_required_ppe_items(names, required_items=None) -> tuple[str, ...]:
     model_labels = {
         _normalize_ppe_label(label)
         for label in (names.values() if hasattr(names, "values") else names)
     }
 
+    requested_items = tuple(required_items or PPE_REQUIRED_ITEMS)
     return tuple(
-        item for item in PPE_REQUIRED_ITEMS
+        item for item in requested_items
         if item in model_labels or f"no-{item}" in model_labels
     )
 
@@ -590,6 +603,67 @@ def _get_missing_ppe_items(present_items, required_items) -> tuple[str, ...]:
         if not _normalize_ppe_label(item).startswith("no-")
     }
     return tuple(item for item in required_items if item not in present)
+
+
+def _get_next_ppe_item(required_items, cycle_index):
+    items = tuple(required_items or ())
+    if not items:
+        return None, cycle_index
+
+    index = int(cycle_index) % len(items)
+    return items[index], int(cycle_index) + 1
+
+
+def _get_ppe_violation_severity(items) -> str:
+    """Usa la prioridad mas alta entre todos los EPP ausentes/incorrectos."""
+    normalized_items = {
+        _normalize_ppe_label(str(item).removeprefix("no-"))
+        for item in (items or ())
+    }
+    severities = [
+        PPE_ITEM_SEVERITIES.get(item, "BAJO")
+        for item in normalized_items
+    ]
+    return max(
+        severities or ["BAJO"],
+        key=lambda severity: PPE_SEVERITY_RANK[severity],
+    )
+
+
+def _ppe_person_memory_key(camera_id, person_box, authorized_person=None):
+    if authorized_person is not None and getattr(authorized_person, "pk", None):
+        return f"{camera_id}:authorized:{authorized_person.pk}"
+
+    center_x, center_y = _box_center(person_box)
+    return f"{camera_id}:position:{center_x // 160}:{center_y // 160}"
+
+
+def _remember_recent_ppe_items(memory, person_key, present_items, now):
+    item_times = memory.setdefault(person_key, {})
+    for item in present_items:
+        normalized = _normalize_ppe_label(item)
+        if not normalized.startswith("no-"):
+            item_times[normalized] = now
+
+    for item in list(item_times):
+        if item == "safety glasses":
+            ttl = float(
+                getattr(
+                    settings,
+                    "PPE_SAFETY_GLASSES_PRESENCE_TTL_SECONDS",
+                    getattr(settings, "PPE_PRESENCE_TTL_SECONDS", 3.0),
+                )
+            )
+        else:
+            ttl = float(getattr(settings, "PPE_PRESENCE_TTL_SECONDS", 3.0))
+        if now - item_times[item] > ttl:
+            del item_times[item]
+
+    if not item_times:
+        memory.pop(person_key, None)
+        return set()
+
+    return set(item_times)
 
 
 def _is_ppe_item_inside_person(person_box, item_box) -> bool:
@@ -633,7 +707,22 @@ def _prune_ppe_violations(memory, observed_keys, now):
     for key in list(memory.keys()):
         last_seen = memory[key].get("last_seen", 0.0)
 
-        if key not in observed_keys or now - last_seen > PPE_VIOLATION_TTL_SECONDS:
+        # `observed_keys` solo contiene el EPP revisado en este turno. No se
+        # elimina el resto inmediatamente porque se revisara en el siguiente
+        # ciclo; solo se descartan contadores realmente vencidos.
+        if now - last_seen > PPE_VIOLATION_TTL_SECONDS:
+            del memory[key]
+
+
+def _clear_ppe_violation(memory, camera_id, person_box, item):
+    """Reinicia la ausencia acumulada cuando el EPP vuelve a verse."""
+    center_x, center_y = _box_center(person_box)
+    person_prefix = f"{camera_id}:{center_x // 120}:{center_y // 120}:"
+    item_name = PPE_ITEM_DISPLAY_NAMES.get(item, item)
+    item_key = _safe_event_key(item_name)
+
+    for key in list(memory):
+        if key.startswith(person_prefix) and item_key in key:
             del memory[key]
 
 
@@ -754,6 +843,57 @@ def _get_recent_identity(detected_faces, now):
         recent_faces,
         key=lambda face: face.get("last_seen", 0.0)
     )
+
+
+def _resolve_tracked_ppe_identity(
+    memory,
+    camera_id,
+    person_box,
+    detected_identity,
+    now,
+):
+    """Conserva la identidad aunque una mascarilla oculte luego el rostro."""
+    ttl = float(getattr(settings, "PPE_IDENTITY_TRACKING_TTL_SECONDS", 30.0))
+    for key in list(memory):
+        if now - memory[key].get("last_seen", 0.0) > ttl:
+            del memory[key]
+
+    if detected_identity is not None and detected_identity.get("is_authorized"):
+        person_obj = detected_identity.get("person_obj")
+        person_id = getattr(person_obj, "pk", None)
+        if person_id is not None:
+            memory[f"{camera_id}:{person_id}"] = {
+                "identity": detected_identity,
+                "box": person_box,
+                "last_seen": now,
+            }
+        return detected_identity
+
+    person_area = _box_area(person_box)
+    best_entry = None
+    best_score = 0.0
+
+    for key, entry in memory.items():
+        if not key.startswith(f"{camera_id}:"):
+            continue
+        tracked_box = entry.get("box")
+        if not tracked_box:
+            continue
+        tracked_area = _box_area(tracked_box)
+        union = person_area + tracked_area - _intersection_area(person_box, tracked_box)
+        if union <= 0:
+            continue
+        score = _intersection_area(person_box, tracked_box) / float(union)
+        if score >= 0.25 and score > best_score:
+            best_score = score
+            best_entry = entry
+
+    if best_entry is None:
+        return detected_identity
+
+    best_entry["box"] = person_box
+    best_entry["last_seen"] = now
+    return best_entry["identity"]
 
 
 def _get_identity_text(identity):
@@ -967,15 +1107,23 @@ def _load_ppe_model_locked():
         _log_line("Ultralytics no disponible: PPE deshabilitado", key="ultra_missing", throttle_sec=10)
         return None
 
-    model_path = os.path.join(settings.BASE_DIR, "camera", "ppe.pt")
+    model_path = os.fspath(settings.PPE_MODEL_PATH)
     if not os.path.exists(model_path):
-        _log_line(f"âŒ No existe ppe.pt en: {model_path}", key="ppe_file_missing", throttle_sec=10)
+        _log_line(
+            f"No existe el modelo PPE en: {model_path}",
+            key="ppe_file_missing",
+            throttle_sec=10,
+        )
         return None
 
     try:
         model = YOLO(model_path)
         _PPE_CACHE["model"] = model
-        _log_line("âœ… PPE model cargado", key="ppe_loaded", throttle_sec=10)
+        _log_line(
+            f"Modelo PPE SH17 cargado: {model_path}",
+            key="ppe_loaded",
+            throttle_sec=10,
+        )
         return model
     except Exception as e:
         _log_line(f"âŒ Error cargando PPE model: {e}", key="ppe_load_err", throttle_sec=10)
@@ -1193,17 +1341,40 @@ def _open_rtsp_camera(cv2_module, source):
     return cap
 
 
+def _get_local_camera_backend_candidates(cv2_module):
+    """Evita DSHOW salvo que se habilite expresamente en la configuracion."""
+    configured = getattr(settings, "LOCAL_CAMERA_BACKENDS", ("MSMF", "DEFAULT"))
+    backend_map = {
+        "DSHOW": getattr(cv2_module, "CAP_DSHOW", None),
+        "MSMF": getattr(cv2_module, "CAP_MSMF", None),
+        "DEFAULT": None,
+    }
+    candidates = []
+
+    for backend_name in configured:
+        name = str(backend_name).strip().upper()
+        if name not in backend_map:
+            continue
+        backend = backend_map[name]
+        if name != "DEFAULT" and backend is None:
+            continue
+        candidates.append((name, backend))
+
+    return candidates or [("DEFAULT", None)]
+
+
 def _open_local_camera(cv2, camera_source: int, camera_name: str, target_fps: int):
     if os.name == "nt":
-        backend_candidates = [
-            ("DSHOW", getattr(cv2, "CAP_DSHOW", None)),
-            ("MSMF", getattr(cv2, "CAP_MSMF", None)),
-            ("DEFAULT", None),
-        ]
+        backend_candidates = _get_local_camera_backend_candidates(cv2)
     else:
         backend_candidates = [("DEFAULT", None)]
 
     for backend_name, backend in backend_candidates:
+        _log_line(
+            f"Abriendo camara local {camera_name} con backend {backend_name}",
+            key=f"local_camera_open_{camera_name}_{backend_name}",
+            throttle_sec=10,
+        )
         if backend is None:
             cap = cv2.VideoCapture(camera_source)
         else:
@@ -1329,16 +1500,27 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     latest_reader = LatestFrameReader(cap, camera_name)
     latest_reader.start()
 
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    face_cascade = None
+    cascade_factory = getattr(cv2, "CascadeClassifier", None)
+    haarcascades_path = getattr(getattr(cv2, "data", None), "haarcascades", None)
+    if cascade_factory is not None and haarcascades_path:
+        face_cascade = cascade_factory(
+            haarcascades_path + "haarcascade_frontalface_default.xml"
+        )
 
     # Face recognition setup
     last_face_db_sync = 0.0
     known_face_encodings = []
     known_face_metadata = []
+    active_authorized_person_ids = set()
     current_faces = []
     last_detected_faces = []
     unauthorized_face_memory = {}
+    unauthorized_person_memory = {}
     ppe_violation_memory = {}
+    ppe_presence_memory = {}
+    ppe_identity_memory = {}
+    ppe_item_cycle_index = 0
     recent_area_context = {}
 
     frame_counter = 0
@@ -1476,13 +1658,20 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             # Face detection and recognition
             if face_rec is not None:
                 if frame_counter % face_recognition_frame_interval == 0:
-                    # Sync authorized faces from database periodically (every 10 seconds)
-                    if now - last_face_db_sync > 10.0:
+                    # Sincroniza frecuentemente para que altas/bajas del registro
+                    # se reflejen sin conservar identidades eliminadas en memoria.
+                    if now - last_face_db_sync > getattr(
+                        settings,
+                        "FACE_DB_SYNC_SECONDS",
+                        2.0,
+                    ):
                         known_face_encodings = []
                         known_face_metadata = []
+                        active_authorized_person_ids = set()
                         try:
                             close_old_connections()
                             for person in AuthorizedPerson.objects.filter(is_active=True):
+                                active_authorized_person_ids.add(person.pk)
                                 try:
                                     enc = json.loads(person.face_encoding)
                                     known_face_encodings.append(np.array(enc))
@@ -1494,6 +1683,23 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                     print(f"Error parsing encoding for {person}: {e}")
                         except Exception as e:
                             print(f"Error loading authorized persons: {e}")
+
+                        last_detected_faces = [
+                            face
+                            for face in last_detected_faces
+                            if not face.get("is_authorized")
+                            or getattr(face.get("person_obj"), "pk", None)
+                            in active_authorized_person_ids
+                        ]
+                        for identity_key in list(ppe_identity_memory):
+                            tracked_person = ppe_identity_memory[identity_key][
+                                "identity"
+                            ].get("person_obj")
+                            if (
+                                getattr(tracked_person, "pk", None)
+                                not in active_authorized_person_ids
+                            ):
+                                del ppe_identity_memory[identity_key]
                         last_face_db_sync = now
 
                     # Run recognition
@@ -1649,7 +1855,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         new_faces=new_detected_faces,
                         now=now,
                     )
-            else:
+            elif face_cascade is not None:
                 # Fallback to Haar Cascade
                 if frame_counter % face_detection_frame_interval == 0:
                     gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
@@ -1736,6 +1942,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 camera=camera,
                                 epp_correcto=False,
                                 severity=detection.severity,
+                                object_label=detection.internal_label,
                             )
 
                             _log_line(
@@ -1841,6 +2048,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 authorized_person=event.authorized_person,
                                 epp_correcto=False,
                                 severity=event.severity,
+                                object_label=event.object_label,
                             )
 
                             _log_line(
@@ -1872,11 +2080,30 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         )[0]
                     boxes = res.boxes
                     names = res.names
-                    supported_required_ppe_items = _get_supported_required_ppe_items(names)
+                    supported_required_ppe_items = _get_supported_required_ppe_items(
+                        names,
+                    )
+                    required_description = ", ".join(
+                        PPE_ITEM_DISPLAY_NAMES.get(item, item)
+                        for item in supported_required_ppe_items
+                    )
+                    _log_line(
+                        f"Politica EPP [{camera_name}]: {required_description}",
+                        key=f"ppe_policy_{camera.id}",
+                        throttle_sec=60,
+                    )
+                    target_ppe_item, ppe_item_cycle_index = _get_next_ppe_item(
+                        supported_required_ppe_items,
+                        ppe_item_cycle_index,
+                    )
+
+                    if target_ppe_item is None:
+                        continue
 
                     persons = []
                     items = []
                     observed_ppe_violation_keys = set()
+                    observed_unauthorized_person_keys = set()
 
                     for b in boxes:
                         cls_id = int(b.cls[0])
@@ -1922,7 +2149,58 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         if identity is None and len(persons) == 1:
                             identity = _get_recent_identity(last_detected_faces, now)
 
+                        identity = _resolve_tracked_ppe_identity(
+                            ppe_identity_memory,
+                            camera.id,
+                            (px1, py1, px2, py2),
+                            identity,
+                            now,
+                        )
+
                         person_name, auth_status, authorized_person = _get_identity_text(identity)
+
+                        if authorized_person is None:
+                            unauthorized_key = _ppe_violation_key(
+                                camera.id,
+                                (px1, py1, px2, py2),
+                                "unauthorized-person",
+                                "persona no autorizada",
+                            )
+                            observed_unauthorized_person_keys.add(unauthorized_key)
+                            unauthorized_confirmed, unauthorized_count = _track_ppe_violation(
+                                unauthorized_person_memory,
+                                unauthorized_key,
+                                now,
+                            )
+
+                            if unauthorized_confirmed:
+                                _log_line(
+                                    f"PERSONA [{camera_name}]: Persona no autorizada detectada",
+                                    key=f"person_unauthorized_{camera.id}",
+                                    throttle_sec=2.0,
+                                )
+                                event_key = f"unauthorized_face_event_{camera.id}"
+                                if can_save_event(event_key, seconds=30):
+                                    create_security_event(
+                                        event_type="intrusion",
+                                        details=(
+                                            "Persona no autorizada detectada en el area "
+                                            "monitoreada por deteccion corporal"
+                                        ),
+                                        frame=evidence_frame.copy(),
+                                        camera=camera,
+                                        epp_correcto=False,
+                                        severity="ALTO",
+                                    )
+                            else:
+                                _log_line(
+                                    f"PERSONA [{camera_name}]: verificando persona no autorizada "
+                                    f"({unauthorized_count}/{PPE_CONFIRMATION_FRAMES})",
+                                    key=f"person_unauthorized_pending_{camera.id}",
+                                    throttle_sec=1.2,
+                                )
+                        else:
+                            unauthorized_person_memory.clear()
 
                         present = set()
                         negatives = set()
@@ -1937,9 +2215,41 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 if label.startswith("no-"):
                                     negatives.add(label)
 
+                        person_memory_key = _ppe_person_memory_key(
+                            camera.id,
+                            (px1, py1, px2, py2),
+                            authorized_person,
+                        )
+                        present.update(
+                            _remember_recent_ppe_items(
+                                ppe_presence_memory,
+                                person_memory_key,
+                                present,
+                                now,
+                            )
+                        )
+
+                        negatives = {
+                            label
+                            for label in negatives
+                            if _normalize_ppe_label(label.removeprefix("no-"))
+                            == target_ppe_item
+                        }
+
                         if negatives:
-                            base_msg = "âš  Indumentaria incorrecta: " + ", ".join(sorted([x.upper() for x in negatives]))
-                            msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            violation_items = _get_missing_ppe_items(
+                                present,
+                                (target_ppe_item,),
+                            )
+                            violation_severity = _get_ppe_violation_severity(
+                                violation_items or negatives
+                            )
+                            violation_description = ", ".join(
+                                PPE_ITEM_DISPLAY_NAMES.get(item, item)
+                                for item in violation_items
+                            ) or ", ".join(sorted(negatives))
+                            base_msg = f"âš  Indumentaria incorrecta: {violation_description}"
+                            msg = f"{base_msg} | Nivel: {violation_severity} | Persona: {person_name} | Estado: {auth_status}"
                             animal_context = recent_area_context.get("animal")
                             if animal_context and now - animal_context.get("last_seen", 0.0) <= 10.0:
                                 msg += (
@@ -1996,10 +2306,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
-                                    severity="ALTO",
+                                    severity=violation_severity,
                                 )
 
-                            cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
+                            violation_color = PPE_SEVERITY_COLORS[violation_severity]
+                            cv2.rectangle(frame, (px1, py1), (px2, py2), violation_color, 2)
 
                             cv2.putText(
                                 frame,
@@ -2007,7 +2318,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 (px1, max(py1 - 10, 20)),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
-                                (0, 255, 255),
+                                violation_color,
                                 2
                             )
 
@@ -2015,16 +2326,17 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                         missing = _get_missing_ppe_items(
                             present,
-                            supported_required_ppe_items,
+                            (target_ppe_item,),
                         )
 
                         if missing:
+                            violation_severity = _get_ppe_violation_severity(missing)
                             missing_description = ", ".join(
                                 PPE_ITEM_DISPLAY_NAMES.get(item, item)
                                 for item in missing
                             )
                             base_msg = f"âš  Falta EPP: {missing_description}"
-                            msg = f"{base_msg} | Nivel: ALTO | Persona: {person_name} | Estado: {auth_status}"
+                            msg = f"{base_msg} | Nivel: {violation_severity} | Persona: {person_name} | Estado: {auth_status}"
                             animal_context = recent_area_context.get("animal")
                             if animal_context and now - animal_context.get("last_seen", 0.0) <= 10.0:
                                 msg += (
@@ -2081,10 +2393,11 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
-                                    severity="ALTO",
+                                    severity=violation_severity,
                                 )
 
-                            cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
+                            violation_color = PPE_SEVERITY_COLORS[violation_severity]
+                            cv2.rectangle(frame, (px1, py1), (px2, py2), violation_color, 2)
 
                             cv2.putText(
                                 frame,
@@ -2092,14 +2405,24 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 (px1, max(py1 - 10, 20)),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
-                                (0, 255, 255),
+                                violation_color,
                                 2
                             )
 
                         else:
+                            correct_item = PPE_ITEM_DISPLAY_NAMES.get(
+                                target_ppe_item,
+                                target_ppe_item,
+                            )
+                            _clear_ppe_violation(
+                                ppe_violation_memory,
+                                camera.id,
+                                (px1, py1, px2, py2),
+                                target_ppe_item,
+                            )
                             _log_line(
-                                f"PPE [{camera_name}]: âœ… EPP OK",
-                                key=f"ppe_ok_{camera.id}",
+                                f"PPE [{camera_name}]: EPP correcto: {correct_item}",
+                                key=f"ppe_ok_{camera.id}_{target_ppe_item}",
                                 throttle_sec=1.2
                             )
 
@@ -2107,7 +2430,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
 
                             cv2.putText(
                                 frame,
-                                "EPP OK",
+                                f"EPP correcto: {correct_item}",
                                 (px1, max(py1 - 10, 20)),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7,
@@ -2120,6 +2443,9 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         observed_ppe_violation_keys,
                         now,
                     )
+                    for unauthorized_key in list(unauthorized_person_memory):
+                        if unauthorized_key not in observed_unauthorized_person_keys:
+                            del unauthorized_person_memory[unauthorized_key]
 
                 except Exception as e:
                     _log_line(

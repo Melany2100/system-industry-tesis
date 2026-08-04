@@ -14,17 +14,47 @@ from core_apps.camera.services.incident_email import (
     send_incident_email,
 )
 from core_apps.camera.services.risk_yolo_detector import RiskYoloDetector
+from core_apps.camera.services.vision_event_detector import VisionEventDetector
 from core_apps.camera.models import AuthorizedPerson, Camera, SecurityEvent
 from core_apps.camera.views import (
+    _clear_ppe_violation,
     _clean_live_log_message,
+    _get_local_camera_backend_candidates,
     _get_missing_ppe_items,
+    _get_next_ppe_item,
+    _get_ppe_violation_severity,
     _get_supported_required_ppe_items,
     _is_ppe_person_corroborated,
     _is_valid_ppe_person,
     _live_log_kind,
+    _prune_ppe_violations,
+    _ppe_violation_key,
     _rtsp_stream_sources,
+    _remember_recent_ppe_items,
+    _resolve_tracked_ppe_identity,
     _scale_box_between_frames,
+    _track_ppe_violation,
 )
+
+
+class LocalCameraBackendTests(SimpleTestCase):
+    @override_settings(LOCAL_CAMERA_BACKENDS=("MSMF", "DEFAULT"))
+    def test_dshow_is_not_used_by_default(self):
+        cv2_module = SimpleNamespace(CAP_DSHOW=700, CAP_MSMF=1400)
+
+        self.assertEqual(
+            _get_local_camera_backend_candidates(cv2_module),
+            [("MSMF", 1400), ("DEFAULT", None)],
+        )
+
+    @override_settings(LOCAL_CAMERA_BACKENDS=("DSHOW", "DEFAULT"))
+    def test_dshow_can_be_enabled_explicitly(self):
+        cv2_module = SimpleNamespace(CAP_DSHOW=700, CAP_MSMF=1400)
+
+        self.assertEqual(
+            _get_local_camera_backend_candidates(cv2_module),
+            [("DSHOW", 700), ("DEFAULT", None)],
+        )
 from core_apps.camera.utils import (
     PPE_EMAIL_DEFERRED_REASON,
     create_security_event,
@@ -121,6 +151,148 @@ class EventDetailPresentationTests(SimpleTestCase):
     PPE_PERSON_MIN_ASPECT_RATIO=0.75,
 )
 class PpePersonValidationTests(SimpleTestCase):
+    @override_settings(PPE_IDENTITY_TRACKING_TTL_SECONDS=30.0)
+    def test_keeps_authorized_identity_after_person_puts_on_mask(self):
+        memory = {}
+        pablo = SimpleNamespace(pk=7)
+        identity = {
+            "name": "Pablo",
+            "is_authorized": True,
+            "person_obj": pablo,
+        }
+
+        recognized = _resolve_tracked_ppe_identity(
+            memory, 9, (100, 80, 320, 450), identity, now=1.0
+        )
+        masked = _resolve_tracked_ppe_identity(
+            memory, 9, (110, 85, 330, 455), None, now=8.0
+        )
+
+        self.assertIs(recognized, identity)
+        self.assertIs(masked, identity)
+
+    @override_settings(PPE_IDENTITY_TRACKING_TTL_SECONDS=30.0)
+    def test_does_not_assign_identity_to_a_distant_person(self):
+        memory = {}
+        identity = {
+            "name": "Pablo",
+            "is_authorized": True,
+            "person_obj": SimpleNamespace(pk=7),
+        }
+        _resolve_tracked_ppe_identity(
+            memory, 9, (40, 60, 220, 450), identity, now=1.0
+        )
+
+        result = _resolve_tracked_ppe_identity(
+            memory, 9, (400, 60, 620, 450), None, now=8.0
+        )
+
+        self.assertIsNone(result)
+
+    def test_ppe_items_are_checked_one_at_a_time_in_order(self):
+        required = ("mask", "gloves", "safety glasses")
+        index = 0
+        checked = []
+
+        for _ in range(4):
+            item, index = _get_next_ppe_item(required, index)
+            checked.append(item)
+
+        self.assertEqual(checked, ["mask", "gloves", "safety glasses", "mask"])
+
+    @override_settings(PPE_PRESENCE_TTL_SECONDS=8.0)
+    def test_recent_detected_ppe_is_kept_during_short_occlusion(self):
+        memory = {}
+
+        first = _remember_recent_ppe_items(
+            memory,
+            "camera:person",
+            {"gloves", "safety glasses"},
+            now=10.0,
+        )
+        occluded = _remember_recent_ppe_items(
+            memory,
+            "camera:person",
+            set(),
+            now=16.0,
+        )
+
+        self.assertEqual(first, {"gloves", "safety glasses"})
+        self.assertEqual(occluded, {"gloves", "safety glasses"})
+
+    @override_settings(PPE_PRESENCE_TTL_SECONDS=8.0)
+    def test_old_ppe_presence_expires(self):
+        memory = {}
+        _remember_recent_ppe_items(
+            memory,
+            "camera:person",
+            {"gloves"},
+            now=10.0,
+        )
+
+        self.assertEqual(
+            _remember_recent_ppe_items(
+                memory,
+                "camera:person",
+                set(),
+                now=19.0,
+            ),
+            set(),
+        )
+
+    def test_mask_has_high_priority(self):
+        self.assertEqual(_get_ppe_violation_severity(("mask",)), "ALTO")
+
+    def test_glasses_and_gloves_have_medium_priority(self):
+        self.assertEqual(
+            _get_ppe_violation_severity(("safety glasses", "gloves")),
+            "MEDIO",
+        )
+
+    def test_multiple_missing_items_use_highest_priority(self):
+        self.assertEqual(
+            _get_ppe_violation_severity(("safety glasses", "mask", "gloves")),
+            "ALTO",
+        )
+
+    def test_ppe_alert_requires_three_detections(self):
+        memory = {}
+
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 1.0), (False, 1))
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 2.0), (False, 2))
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 3.0), (True, 3))
+
+    def test_ppe_alert_counter_survives_checks_of_other_items(self):
+        memory = {}
+
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 1.0), (False, 1))
+        _prune_ppe_violations(memory, {"person:gloves"}, now=3.0)
+        self.assertIn("person:mask", memory)
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 7.0), (False, 2))
+        _prune_ppe_violations(memory, {"person:glasses"}, now=9.0)
+        self.assertEqual(_track_ppe_violation(memory, "person:mask", 13.0), (True, 3))
+
+    def test_old_ppe_alert_counter_is_pruned(self):
+        memory = {"person:mask": {"count": 2, "last_seen": 1.0}}
+
+        _prune_ppe_violations(memory, set(), now=22.0)
+
+        self.assertNotIn("person:mask", memory)
+
+    def test_correct_ppe_clears_previous_missing_counter(self):
+        person_box = (120, 120, 360, 440)
+        key = _ppe_violation_key(
+            9,
+            person_box,
+            "missing",
+            "Falta EPP: gafas de proteccion",
+        )
+        memory = {key: {"count": 2, "last_seen": 10.0}}
+
+        _clear_ppe_violation(memory, 9, person_box, "safety glasses")
+
+        self.assertEqual(memory, {})
+
     def test_only_requires_items_supported_by_model(self):
         names = {
             0: "Hardhat",
@@ -132,7 +304,7 @@ class PpePersonValidationTests(SimpleTestCase):
 
         self.assertEqual(
             _get_supported_required_ppe_items(names),
-            ("mask", "hardhat"),
+            ("mask",),
         )
 
     def test_supports_all_required_items_from_sh17_model(self):
@@ -147,7 +319,23 @@ class PpePersonValidationTests(SimpleTestCase):
 
         self.assertEqual(
             _get_supported_required_ppe_items(names),
-            ("mask", "gloves", "earmuffs", "hardhat", "safety glasses"),
+            ("mask", "gloves", "safety glasses"),
+        )
+
+    def test_does_not_require_headphones(self):
+        names = {0: "person", 1: "headphones"}
+
+        self.assertEqual(
+            _get_supported_required_ppe_items(names),
+            (),
+        )
+
+    def test_hardhat_is_not_required(self):
+        names = {0: "person", 1: "helmet", 2: "face-mask"}
+
+        self.assertEqual(
+            _get_supported_required_ppe_items(names),
+            ("mask",),
         )
 
     def test_returns_only_items_missing_from_one_person(self):
@@ -240,6 +428,27 @@ class AnimalFalsePositiveFilterTests(SimpleTestCase):
         self.assertFalse(detector._confirm_animal("cat", (40, 200, 180, 400)))
         detector._scan_id = 2
         self.assertTrue(detector._confirm_animal("cat", (45, 205, 185, 405)))
+
+
+@override_settings(
+    SHARP_OBJECT_ALERT_CONF={"knife": 0.45, "scissors": 0.50},
+    SHARP_OBJECT_CONFIRMATION_FRAMES=3,
+)
+class SharpObjectFalsePositiveFilterTests(SimpleTestCase):
+    def test_uses_stricter_confidence_for_sharp_objects(self):
+        detector = VisionEventDetector.__new__(VisionEventDetector)
+
+        self.assertEqual(detector._sharp_alert_conf("knife"), 0.45)
+        self.assertEqual(detector._sharp_alert_conf("scissors"), 0.50)
+
+    def test_requires_three_confirmations(self):
+        detector = VisionEventDetector.__new__(VisionEventDetector)
+        detector.sharp_detection_memory = {}
+        key = "knife:2:3"
+
+        self.assertEqual(detector._track_sharp_detection(key, 1.0), 1)
+        self.assertEqual(detector._track_sharp_detection(key, 1.1), 2)
+        self.assertEqual(detector._track_sharp_detection(key, 1.2), 3)
 
 
 @override_settings(

@@ -197,4 +197,5 @@ dataset/
 
 # Modelos pesados
 *.pt
+!camera/ppe_sh17_yolov8s.pt
 *.onnx

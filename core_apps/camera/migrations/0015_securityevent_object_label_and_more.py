@@ -10,10 +10,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='securityevent',
-            name='object_label',
-            field=models.CharField(blank=True, max_length=100, null=True),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql=(
+                        'ALTER TABLE "camera_securityevent" '
+                        'ADD COLUMN IF NOT EXISTS "object_label" varchar(100) NULL;'
+                    ),
+                    reverse_sql=(
+                        'ALTER TABLE "camera_securityevent" '
+                        'DROP COLUMN IF EXISTS "object_label";'
+                    ),
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='securityevent',
+                    name='object_label',
+                    field=models.CharField(blank=True, max_length=100, null=True),
+                ),
+            ],
         ),
         migrations.AddField(
             model_name='securityevent',

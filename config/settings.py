@@ -13,6 +13,9 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
+# Evita bloqueos prolongados al inicializar webcams USB con MSMF en Windows.
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -32,6 +35,19 @@ def env_float(name, default):
         return default
 
 
+def env_bool(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return bool(default)
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 # Criterios operativos del sistema, definidos a partir de la tabla de
 # caracteristicas validada del sistema web.
 SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS = env_float(
@@ -44,11 +60,16 @@ SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS = env_float(
 )
 SYSTEM_TARGET_VIDEO_FPS = env_int("SYSTEM_TARGET_VIDEO_FPS", 8)
 SYSTEM_MAX_INTERNAL_VIDEO_FPS = env_int("SYSTEM_MAX_INTERNAL_VIDEO_FPS", 12)
-LOCAL_CAMERA_CAPTURE_WIDTH = env_int("LOCAL_CAMERA_CAPTURE_WIDTH", 1920)
-LOCAL_CAMERA_CAPTURE_HEIGHT = env_int("LOCAL_CAMERA_CAPTURE_HEIGHT", 1080)
+LOCAL_CAMERA_CAPTURE_WIDTH = env_int("LOCAL_CAMERA_CAPTURE_WIDTH", 640)
+LOCAL_CAMERA_CAPTURE_HEIGHT = env_int("LOCAL_CAMERA_CAPTURE_HEIGHT", 480)
 LOCAL_CAMERA_CAPTURE_FPS = env_int("LOCAL_CAMERA_CAPTURE_FPS", 15)
 LIVE_VIDEO_FRAME_WIDTH = env_int("LIVE_VIDEO_FRAME_WIDTH", 640)
 LOCAL_CAMERA_FOURCC = os.getenv("LOCAL_CAMERA_FOURCC", "MJPG")
+LOCAL_CAMERA_BACKENDS = tuple(
+    backend.strip().upper()
+    for backend in os.getenv("LOCAL_CAMERA_BACKENDS", "MSMF,DEFAULT").split(",")
+    if backend.strip()
+)
 SYSTEM_ALERT_EMAIL_TARGET_SECONDS = env_int("SYSTEM_ALERT_EMAIL_TARGET_SECONDS", 8)
 SYSTEM_ALERT_EMAIL_MAX_SECONDS = env_int("SYSTEM_ALERT_EMAIL_MAX_SECONDS", 9)
 SYSTEM_EXPECTED_UPTIME_PERCENT = env_float("SYSTEM_EXPECTED_UPTIME_PERCENT", 95.0)
@@ -283,6 +304,12 @@ EMAIL_TIMEOUT = min(
 PPE_EMAIL_EVERY_N_EVENTS = max(1, env_int("PPE_EMAIL_EVERY_N_EVENTS", 3))
 
 # YOLOv8 / Ultralytics - objetos de riesgo.
+PPE_MODEL_PATH = Path(
+    os.getenv("PPE_MODEL_PATH", "camera/ppe_sh17_yolov8s.pt")
+)
+if not PPE_MODEL_PATH.is_absolute():
+    PPE_MODEL_PATH = BASE_DIR / PPE_MODEL_PATH
+
 RISK_YOLO_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
 RISK_YOLO_CONF = 0.25
 RISK_YOLO_IMGSZ = 960
@@ -295,8 +322,11 @@ RISK_YOLO_ALERT_CONF = {
     "backpack": 0.35,
     "handbag": 0.35,
     "suitcase": 0.35,
-    "bottle": 0.35,
+    "bottle": env_float("RISK_BOTTLE_ALERT_CONF", 0.20),
 }
+RISK_PERSON_CROP_ENABLED = env_bool("RISK_PERSON_CROP_ENABLED", True)
+RISK_PERSON_CROP_EXPAND_RATIO = env_float("RISK_PERSON_CROP_EXPAND_RATIO", 0.25)
+RISK_PERSON_CROP_CONF = env_float("RISK_PERSON_CROP_CONF", 0.15)
 ANIMAL_CONFIRMATION_FRAMES = env_int("ANIMAL_CONFIRMATION_FRAMES", 2)
 ANIMAL_PERSON_OVERLAP_RATIO = env_float("ANIMAL_PERSON_OVERLAP_RATIO", 0.35)
 
@@ -307,14 +337,15 @@ FACE_RECOGNITION_TOLERANCE = env_float("FACE_RECOGNITION_TOLERANCE", 0.65)
 FACE_UNAUTHORIZED_CONFIRMATION_FRAMES = env_int("FACE_UNAUTHORIZED_CONFIRMATION_FRAMES", 3)
 FACE_UNAUTHORIZED_DISPLAY_FRAMES = env_int("FACE_UNAUTHORIZED_DISPLAY_FRAMES", 2)
 FACE_AUTH_MEMORY_SECONDS = env_float("FACE_AUTH_MEMORY_SECONDS", 10.0)
+FACE_DB_SYNC_SECONDS = env_float("FACE_DB_SYNC_SECONDS", 2.0)
 FACE_MIN_BOX_WIDTH_RATIO = env_float("FACE_MIN_BOX_WIDTH_RATIO", 0.020)
 FACE_MIN_BOX_HEIGHT_RATIO = env_float("FACE_MIN_BOX_HEIGHT_RATIO", 0.030)
 # A 8 FPS, 16 frames equivalen a una comprobacion cada ~2 segundos. Se
 # mantienen dos comprobaciones para evitar falsas alertas sin esperar 10-15 s.
 PPE_FRAME_INTERVAL = env_int("PPE_FRAME_INTERVAL", 16)
-PPE_CONFIRMATION_FRAMES = env_int("PPE_CONFIRMATION_FRAMES", 2)
+PPE_CONFIRMATION_FRAMES = env_int("PPE_CONFIRMATION_FRAMES", 3)
 PPE_INFERENCE_IMGSZ = env_int("PPE_INFERENCE_IMGSZ", 800)
-PPE_MODEL_CONFIDENCE = env_float("PPE_MODEL_CONFIDENCE", 0.20)
+PPE_MODEL_CONFIDENCE = env_float("PPE_MODEL_CONFIDENCE", 0.10)
 PPE_PERSON_CONFIDENCE = env_float("PPE_PERSON_CONFIDENCE", 0.55)
 PPE_PERSON_MIN_AREA_RATIO = env_float("PPE_PERSON_MIN_AREA_RATIO", 0.06)
 PPE_PERSON_MIN_HEIGHT_RATIO = env_float("PPE_PERSON_MIN_HEIGHT_RATIO", 0.30)
@@ -327,15 +358,24 @@ PPE_PERSON_CORROBORATION_TTL_SECONDS = env_float(
     "PPE_PERSON_CORROBORATION_TTL_SECONDS",
     3.0,
 )
+PPE_IDENTITY_TRACKING_TTL_SECONDS = env_float(
+    "PPE_IDENTITY_TRACKING_TTL_SECONDS",
+    30.0,
+)
 PPE_MASK_CONFIDENCE = env_float("PPE_MASK_CONFIDENCE", 0.20)
-PPE_GLOVES_CONFIDENCE = env_float("PPE_GLOVES_CONFIDENCE", 0.30)
-PPE_EARMUFFS_CONFIDENCE = env_float("PPE_EARMUFFS_CONFIDENCE", 0.20)
+PPE_GLOVES_CONFIDENCE = env_float("PPE_GLOVES_CONFIDENCE", 0.22)
+PPE_EARMUFFS_CONFIDENCE = env_float("PPE_EARMUFFS_CONFIDENCE", 0.10)
 PPE_HARDHAT_CONFIDENCE = env_float("PPE_HARDHAT_CONFIDENCE", 0.35)
 PPE_SAFETY_GLASSES_CONFIDENCE = env_float(
     "PPE_SAFETY_GLASSES_CONFIDENCE",
-    0.25,
+    0.15,
 )
 PPE_NO_MASK_CONFIDENCE = env_float("PPE_NO_MASK_CONFIDENCE", 0.50)
+PPE_PRESENCE_TTL_SECONDS = env_float("PPE_PRESENCE_TTL_SECONDS", 3.0)
+PPE_SAFETY_GLASSES_PRESENCE_TTL_SECONDS = env_float(
+    "PPE_SAFETY_GLASSES_PRESENCE_TTL_SECONDS",
+    8.0,
+)
 
 # Camara RTSP por defecto para pruebas directas fuera del modelo Camera.
 RTSP_CAMERA_URL = os.getenv(
@@ -352,15 +392,27 @@ YOLO_OBJECT_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
 YOLO_POSE_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s-pose.pt"
 YOLO_FAST_MODEL_PATH = BASE_DIR / "camera" / "weights" / "yolov8s.pt"
 
-SHARP_OBJECT_CONF = 0.18
+SHARP_OBJECT_CONF = env_float("SHARP_OBJECT_CONF", 0.20)
 SHARP_OBJECT_IMGSZ = 1280
 SHARP_OBJECT_CLASSES = [43, 76]
 SHARP_OBJECT_ALERT_CONF = {
-    "knife": 0.20,
-    "scissors": 0.25,
+    "knife": env_float("SHARP_KNIFE_ALERT_CONF", 0.45),
+    "scissors": env_float("SHARP_SCISSORS_ALERT_CONF", 0.30),
 }
-SHARP_OBJECT_CONFIRMATION_FRAMES = 1
+SHARP_OBJECT_CONFIRMATION_FRAMES = env_int(
+    "SHARP_OBJECT_CONFIRMATION_FRAMES",
+    3,
+)
 SHARP_OBJECT_TTL_SECONDS = 2.0
+SHARP_PERSON_CROP_ENABLED = env_bool("SHARP_PERSON_CROP_ENABLED", True)
+SHARP_PERSON_CROP_EXPAND_RATIO = env_float(
+    "SHARP_PERSON_CROP_EXPAND_RATIO",
+    0.30,
+)
+SHARP_PERSON_CROP_MAX_AGE_SECONDS = env_float(
+    "SHARP_PERSON_CROP_MAX_AGE_SECONDS",
+    3.0,
+)
 
 POSE_CONF = 0.35
 POSE_IMGSZ = 640

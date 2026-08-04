@@ -169,6 +169,63 @@ class SecurityEvent(models.Model):
         return "Desconocido/a"
 
 
+class DetectionFunction(models.Model):
+    """Activa una regla de visión que ya está implementada en el sistema."""
+
+    DETECTION_TYPES = (
+        ('face_recognized', 'Rostro reconocido'),
+        ('face_unknown', 'Rostro desconocido'),
+        ('intrusion', 'Intrusión'),
+        ('unauthorized_access', 'Acceso no autorizado'),
+        ('phone_usage', 'Distracción por uso de celular'),
+        ('ppe_missing', 'Falta de EPP'),
+        ('fall_detected', 'Movimiento o caída'),
+        ('authorized_object', 'Objeto autorizado'),
+        ('unauthorized_object', 'Objeto no autorizado'),
+        ('dangerous_object', 'Objeto peligroso detectado'),
+        ('collision_risk', 'Riesgo de choque'),
+        ('cut_risk', 'Riesgo de corte'),
+    )
+
+    name = models.CharField(
+        'Nombre de la nueva categoría',
+        max_length=120,
+        help_text=(
+            'Escribe una categoría propia, aunque todavía no exista en el sistema. '
+            'Ejemplo: Prohibición de celulares en producción.'
+        ),
+    )
+    event_type = models.CharField(
+        'Regla de detección existente',
+        max_length=50,
+        choices=DETECTION_TYPES,
+        unique=True,
+        help_text='Selecciona la regla programada que ejecutará esta nueva categoría.',
+    )
+    severity = models.CharField(
+        'Nivel de riesgo',
+        max_length=10,
+        choices=SecurityEvent.SEVERITY_LEVELS,
+        default='MEDIO',
+    )
+    is_active = models.BooleanField('Activa', default=True)
+    description = models.TextField(
+        'Descripción',
+        blank=True,
+        help_text='Explica el objetivo operativo de la función.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('name',)
+        verbose_name = 'Función de detección'
+        verbose_name_plural = 'Funciones de detección'
+
+    def __str__(self):
+        return f'{self.name} ({self.get_event_type_display()})'
+
+
 class Camera(models.Model):
     nombre = models.CharField(max_length=100)
     source = models.CharField(max_length=500)

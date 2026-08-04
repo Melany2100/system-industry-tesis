@@ -213,6 +213,71 @@ class RiskYoloDetector:
             if model_label == "person":
                 person_boxes.append(coordinates)
 
+        # Una botella transparente sostenida puede ocupar muy pocos pixeles en
+        # el cuadro completo. Se vuelve a analizar el recorte de cada persona,
+        # ampliado para incluir manos y objetos que sobresalen de su caja.
+        if getattr(settings, "RISK_PERSON_CROP_ENABLED", True):
+            frame_height, frame_width = frame.shape[:2]
+            expand_ratio = getattr(settings, "RISK_PERSON_CROP_EXPAND_RATIO", 0.25)
+
+            for person_box in person_boxes:
+                px1, py1, px2, py2 = person_box
+                width = px2 - px1
+                height = py2 - py1
+                pad_x = int(width * expand_ratio)
+                pad_y = int(height * expand_ratio)
+                crop_x1 = max(0, px1 - pad_x)
+                crop_y1 = max(0, py1 - pad_y)
+                crop_x2 = min(frame_width, px2 + pad_x)
+                crop_y2 = min(frame_height, py2 + pad_y)
+                crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+
+                if crop.shape[0] < 32 or crop.shape[1] < 32:
+                    continue
+
+                with self._inference_lock:
+                    crop_results = self.model.predict(
+                        source=crop,
+                        conf=getattr(settings, "RISK_PERSON_CROP_CONF", 0.15),
+                        imgsz=self.imgsz,
+                        classes=[39],
+                        verbose=False,
+                    )
+
+                if not crop_results or crop_results[0].boxes is None:
+                    continue
+
+                for box in crop_results[0].boxes:
+                    cls_id = int(box.cls[0])
+                    model_label = self.model.names[cls_id]
+                    confidence = float(box.conf[0])
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    mapped_box = (
+                        x1 + crop_x1,
+                        y1 + crop_y1,
+                        x2 + crop_x1,
+                        y2 + crop_y1,
+                    )
+                    raw_boxes.append((model_label, confidence, mapped_box))
+
+        # Conserva solo la mejor lectura por clase y zona. Evita dibujar dos
+        # veces una botella encontrada tanto en el cuadro como en el recorte.
+        best_raw_boxes = {}
+        for model_label, confidence, coordinates in raw_boxes:
+            x1, y1, x2, y2 = coordinates
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            detection_key = (model_label, center_x // 80, center_y // 80)
+            previous = best_raw_boxes.get(detection_key)
+            if previous is None or confidence > previous[0]:
+                best_raw_boxes[detection_key] = (confidence, coordinates)
+
+        raw_boxes = [
+            (model_label, confidence, coordinates)
+            for (model_label, _grid_x, _grid_y), (confidence, coordinates)
+            in best_raw_boxes.items()
+        ]
+
         for model_label, confidence, coordinates in raw_boxes:
             internal_label = YOLO_LABEL_TO_INTERNAL.get(model_label)
 

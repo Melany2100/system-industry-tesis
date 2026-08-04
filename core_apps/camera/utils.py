@@ -9,7 +9,7 @@ from django.core.files.storage import default_storage
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
-from core_apps.camera.models import SecurityEvent
+from core_apps.camera.models import DetectionFunction, SecurityEvent
 from core_apps.camera.services.incident_email import notify_incident_by_email
 from core_apps.informes.models import Informe
 
@@ -488,10 +488,22 @@ def create_security_event(
     camera=None,
     authorized_person=None,
     epp_correcto=None,
-    severity=None
+    severity=None,
+    object_label=None,
 ):
     try:
         close_old_connections()
+        detection_function = DetectionFunction.objects.filter(
+            event_type=event_type,
+        ).first()
+
+        # Si existe una configuración administrativa, esta gobierna la regla.
+        # Sin configuración se conserva el comportamiento histórico del detector.
+        if detection_function is not None:
+            if not detection_function.is_active:
+                return None
+            severity = detection_function.severity
+
         image_path = None
 
         if frame is not None:
@@ -519,7 +531,8 @@ def create_security_event(
                 image_path=image_path,
                 related_user=user,
                 authorized_person=authorized_person,
-                camera=camera
+                camera=camera,
+                object_label=object_label,
             )
 
             persona = _plain_person_name(user=user, authorized_person=authorized_person)

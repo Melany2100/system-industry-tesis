@@ -1,5 +1,82 @@
+from django import forms
 from django.contrib import admin
-from .models import AuthorizedPerson, SecurityEvent, Camera
+from .models import AuthorizedPerson, Camera, DetectionFunction, SecurityEvent
+
+
+DETECTION_RULE_CHOICES = (
+    (
+        "Personas y accesos",
+        (
+            ("face_recognized", "Rostro reconocido"),
+            ("face_unknown", "Rostro desconocido"),
+            ("intrusion", "Intrusión"),
+            ("unauthorized_access", "Acceso no autorizado"),
+        ),
+    ),
+    (
+        "Conducta y seguridad personal",
+        (
+            ("phone_usage", "Distracción por uso de celular"),
+            ("ppe_missing", "Falta de EPP"),
+            ("fall_detected", "Movimiento o caída"),
+        ),
+    ),
+    (
+        "Objetos y riesgos industriales",
+        (
+            ("authorized_object", "Objeto autorizado"),
+            ("unauthorized_object", "Objeto no autorizado"),
+            ("dangerous_object", "Objeto peligroso detectado"),
+            ("collision_risk", "Riesgo de choque"),
+            ("cut_risk", "Riesgo de corte"),
+        ),
+    ),
+)
+
+
+class DetectionFunctionAdminForm(forms.ModelForm):
+    event_type = forms.ChoiceField(
+        label="Regla de detección existente",
+        choices=DETECTION_RULE_CHOICES,
+        help_text=(
+            "La regla ya está programada en el sistema. La categoría nueva tendrá "
+            "el nombre libre indicado en el campo anterior."
+        ),
+    )
+
+    class Meta:
+        model = DetectionFunction
+        fields = "__all__"
+        widgets = {
+            "description": forms.Textarea(attrs={
+                "rows": 4,
+                "placeholder": "Describe el objetivo de esta función de detección.",
+            }),
+        }
+
+
+@admin.register(DetectionFunction)
+class DetectionFunctionAdmin(admin.ModelAdmin):
+    form = DetectionFunctionAdminForm
+    list_display = ('name', 'event_type', 'severity', 'is_active', 'updated_at')
+    list_filter = ('is_active', 'event_type', 'severity')
+    search_fields = ('name', 'description')
+    readonly_fields = ('created_at', 'updated_at')
+    fieldsets = (
+        (
+            'Nueva categoría de detección',
+            {
+                'fields': ('name', 'event_type', 'severity', 'is_active'),
+                'description': (
+                    'Primero escribe el nombre de una categoría nueva y luego '
+                    'vincúlala con una regla que ya está programada. Esto no crea '
+                    'un evento histórico ni requiere escribir código nuevo.'
+                ),
+            },
+        ),
+        ('Descripción operativa', {'fields': ('description',)}),
+        ('Auditoría', {'classes': ('collapse',), 'fields': ('created_at', 'updated_at')}),
+    )
 
 
 @admin.register(AuthorizedPerson)
@@ -111,3 +188,7 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'email_sent_at',
         'email_error',
     )
+
+    def has_add_permission(self, request):
+        """El historial solo contiene evidencia producida por los detectores."""
+        return False

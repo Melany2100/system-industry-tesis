@@ -1,4 +1,6 @@
 from datetime import datetime
+from threading import Event
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -26,6 +28,7 @@ from core_apps.camera.views import (
     _get_supported_required_ppe_items,
     _is_ppe_person_corroborated,
     _is_valid_ppe_person,
+    LatestInferenceRunner,
     _live_log_kind,
     _prune_ppe_violations,
     _ppe_violation_key,
@@ -33,6 +36,7 @@ from core_apps.camera.views import (
     _remember_recent_ppe_items,
     _resolve_tracked_ppe_identity,
     _scale_box_between_frames,
+    _should_open_rtsp_analysis_stream,
     _track_ppe_violation,
 )
 
@@ -55,6 +59,46 @@ class LocalCameraBackendTests(SimpleTestCase):
             _get_local_camera_backend_candidates(cv2_module),
             [("DSHOW", 700), ("DEFAULT", None)],
         )
+
+
+class LatestInferenceRunnerTests(SimpleTestCase):
+    class FakeFrame:
+        size = 1
+        shape = (1080, 1920, 3)
+
+        def copy(self):
+            return self
+
+    def test_keeps_only_one_inference_in_flight(self):
+        started = Event()
+        release = Event()
+
+        def inference(frame):
+            started.set()
+            release.wait(1.0)
+            return "detections"
+
+        runner = LatestInferenceRunner(inference, "test-inference")
+        frame = self.FakeFrame()
+
+        self.assertTrue(runner.submit(frame))
+        self.assertTrue(started.wait(1.0))
+        self.assertFalse(runner.submit(self.FakeFrame()))
+        release.set()
+
+        completion = None
+        deadline = time.monotonic() + 1.0
+        while completion is None and time.monotonic() < deadline:
+            completion = runner.consume_latest()
+            if completion is None:
+                time.sleep(0.01)
+
+        self.assertIsNotNone(completion)
+        value, source_shape, error, source_frame = completion
+        self.assertEqual(value, "detections")
+        self.assertEqual(source_shape, (1080, 1920, 3))
+        self.assertIsNone(error)
+        self.assertIs(source_frame, frame)
 from core_apps.camera.utils import (
     PPE_EMAIL_DEFERRED_REASON,
     create_security_event,
@@ -471,7 +515,16 @@ class HighResolutionCameraConfigurationTests(SimpleTestCase):
             "rtsp://usuario:clave@192.168.1.60:554/stream1",
         )
 
-    def test_vigi_substream_url_also_enables_main_analysis_stream(self):
+    def test_vigi_substream_url_is_respected_as_single_low_load_stream(self):
+        preview, analysis = _rtsp_stream_sources(
+            "rtsp://usuario:clave@192.168.1.60:554/stream2"
+        )
+
+        self.assertTrue(preview.endswith("/stream2"))
+        self.assertIsNone(analysis)
+
+    @override_settings(RTSP_FORCE_MAIN_ANALYSIS_FROM_SUBSTREAM=True)
+    def test_vigi_substream_can_force_main_analysis_stream(self):
         preview, analysis = _rtsp_stream_sources(
             "rtsp://usuario:clave@192.168.1.60:554/stream2"
         )
@@ -483,6 +536,43 @@ class HighResolutionCameraConfigurationTests(SimpleTestCase):
         source = "rtsp://192.168.1.70/live/ch00"
 
         self.assertEqual(_rtsp_stream_sources(source), (source, None))
+
+    @override_settings(RTSP_DUAL_STREAM_ENABLED=False)
+    def test_single_stream_mode_still_selects_vigi_substream(self):
+        preview, analysis = _rtsp_stream_sources(
+            "rtsp://usuario:clave@192.168.1.60:554/stream1"
+        )
+
+        self.assertTrue(preview.endswith("/stream2"))
+        self.assertIsNone(analysis)
+
+    @override_settings(RTSP_SKIP_MAIN_WHEN_PREVIEW_WIDTH_AT_LEAST=1280)
+    def test_does_not_open_1440p_analysis_when_preview_is_already_1080p(self):
+        cv2_module = SimpleNamespace(CAP_PROP_FRAME_WIDTH=3)
+        preview_cap = Mock()
+        preview_cap.get.return_value = 1920
+
+        self.assertFalse(
+            _should_open_rtsp_analysis_stream(
+                cv2_module,
+                preview_cap,
+                "rtsp://camera/stream1",
+            )
+        )
+
+    @override_settings(RTSP_SKIP_MAIN_WHEN_PREVIEW_WIDTH_AT_LEAST=1280)
+    def test_keeps_main_analysis_for_small_preview(self):
+        cv2_module = SimpleNamespace(CAP_PROP_FRAME_WIDTH=3)
+        preview_cap = Mock()
+        preview_cap.get.return_value = 640
+
+        self.assertTrue(
+            _should_open_rtsp_analysis_stream(
+                cv2_module,
+                preview_cap,
+                "rtsp://camera/stream1",
+            )
+        )
 
     def test_scales_high_resolution_box_to_live_frame(self):
         scaled = _scale_box_between_frames(

@@ -1087,6 +1087,10 @@ def _load_face_recognition():
 _PPE_CACHE = {"model": None}
 _PPE_LOAD_LOCK = Lock()
 _PPE_INFERENCE_LOCK = Lock()
+# Evita que riesgo y EPP saturen simultaneamente la CPU/GPU. Cada runner
+# descarta solicitudes mientras espera, por lo que nunca se acumulan frames.
+_HEAVY_INFERENCE_LOCK = Lock()
+_INFERENCE_SKIPPED = object()
 _RISK_YOLO_CACHE = {"detector": None}
 _RISK_YOLO_LOAD_LOCK = Lock()
 _VISION_EVENT_CACHE = {"detectors": {}}
@@ -1261,6 +1265,55 @@ class LatestFrameReader:
                 self._latest_at = time.monotonic()
 
 
+class LatestInferenceRunner:
+    """Ejecuta una inferencia pesada sin bloquear la publicacion de video."""
+
+    def __init__(self, inference, name):
+        self._inference = inference
+        self._name = name
+        self._lock = Lock()
+        self._busy = False
+        self._pending = None
+
+    def submit(self, frame) -> bool:
+        if frame is None or not getattr(frame, "size", 0):
+            return False
+
+        with self._lock:
+            # No se forma una cola: si el modelo sigue ocupado o todavia hay
+            # un resultado sin consumir, se descarta esta solicitud.
+            if self._busy or self._pending is not None:
+                return False
+            self._busy = True
+
+        frame_copy = frame.copy()
+        Thread(
+            target=self._run,
+            args=(frame_copy,),
+            name=self._name,
+            daemon=True,
+        ).start()
+        return True
+
+    def consume_latest(self):
+        with self._lock:
+            result = self._pending
+            self._pending = None
+            return result
+
+    def _run(self, frame):
+        value = None
+        error = None
+        try:
+            value = self._inference(frame)
+        except Exception as exc:
+            error = exc
+        finally:
+            with self._lock:
+                self._pending = (value, frame.shape, error, frame)
+                self._busy = False
+
+
 def _bounded_camera_fps(value=None) -> int:
     min_fps = max(1, int(getattr(settings, "SYSTEM_TARGET_VIDEO_FPS", 8)))
     max_fps = max(min_fps, int(getattr(settings, "SYSTEM_MAX_INTERNAL_VIDEO_FPS", 12)))
@@ -1313,10 +1366,7 @@ def _scale_box_between_frames(box, source_shape, target_shape):
 def _rtsp_stream_sources(source):
     """Obtiene substream para vista y main stream para analisis en camaras VIGI."""
     source = str(source or "").strip()
-    if (
-        not source.lower().startswith("rtsp://")
-        or not getattr(settings, "RTSP_DUAL_STREAM_ENABLED", True)
-    ):
+    if not source.lower().startswith("rtsp://"):
         return source, None
 
     main_name = str(getattr(settings, "RTSP_MAIN_STREAM_NAME", "stream1"))
@@ -1329,6 +1379,25 @@ def _rtsp_stream_sources(source):
         return source, None
 
     preview_source = stream_pattern.sub(f"/{sub_name}", source, count=1)
+    if not getattr(settings, "RTSP_DUAL_STREAM_ENABLED", True):
+        return preview_source, None
+
+    # Elegir stream2 explicitamente debe ser una forma real de bajar la carga.
+    # Antes se volvia a abrir stream1 de manera silenciosa y se decodificaban
+    # ambos flujos. Se conserva el modo dual al registrar stream1, o se puede
+    # forzar para stream2 mediante configuracion si una instalacion lo necesita.
+    selected_substream = re.search(
+        rf"/{re.escape(sub_name)}(?=$|\?)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if selected_substream and not getattr(
+        settings,
+        "RTSP_FORCE_MAIN_ANALYSIS_FROM_SUBSTREAM",
+        False,
+    ):
+        return preview_source, None
+
     analysis_source = stream_pattern.sub(f"/{main_name}", source, count=1)
     if preview_source == analysis_source:
         return preview_source, None
@@ -1336,9 +1405,65 @@ def _rtsp_stream_sources(source):
 
 
 def _open_rtsp_camera(cv2_module, source):
-    cap = cv2_module.VideoCapture(source, cv2_module.CAP_FFMPEG)
+    params = []
+    timeout_settings = (
+        ("CAP_PROP_OPEN_TIMEOUT_MSEC", "RTSP_OPEN_TIMEOUT_MILLISECONDS", 5000),
+        ("CAP_PROP_READ_TIMEOUT_MSEC", "RTSP_READ_TIMEOUT_MILLISECONDS", 3000),
+    )
+    for property_name, setting_name, default in timeout_settings:
+        property_id = getattr(cv2_module, property_name, None)
+        if property_id is not None:
+            params.extend(
+                [property_id, max(250, int(getattr(settings, setting_name, default)))]
+            )
+
+    try:
+        if params:
+            cap = cv2_module.VideoCapture(
+                source,
+                cv2_module.CAP_FFMPEG,
+                params,
+            )
+        else:
+            cap = cv2_module.VideoCapture(source, cv2_module.CAP_FFMPEG)
+    except (TypeError, ValueError):
+        # Compatibilidad con versiones antiguas de OpenCV que no admiten
+        # parametros de apertura en el constructor.
+        cap = cv2_module.VideoCapture(source, cv2_module.CAP_FFMPEG)
+
     cap.set(cv2_module.CAP_PROP_BUFFERSIZE, 1)
     return cap
+
+
+def _should_open_rtsp_analysis_stream(cv2_module, preview_cap, analysis_source):
+    if not analysis_source:
+        return False
+
+    threshold = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "RTSP_SKIP_MAIN_WHEN_PREVIEW_WIDTH_AT_LEAST",
+                1280,
+            )
+        ),
+    )
+    if threshold == 0:
+        return True
+
+    width_property = getattr(cv2_module, "CAP_PROP_FRAME_WIDTH", None)
+    if width_property is None:
+        return True
+
+    try:
+        preview_width = int(preview_cap.get(width_property) or 0)
+    except (AttributeError, TypeError, ValueError):
+        return True
+
+    # Los substreams 1080p de las VIGI ya tienen detalle suficiente para los
+    # modelos. Abrir tambien 1440p solo duplica decodificacion en este caso.
+    return preview_width <= 0 or preview_width < threshold
 
 
 def _get_local_camera_backend_candidates(cv2_module):
@@ -1439,6 +1564,10 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     ppe_model = None
     face_rec = None
     models_attached = False
+    risk_inference = None
+    ppe_inference = None
+    latest_risk_detections = []
+    latest_risk_detections_at = 0.0
 
     target_fps = _bounded_camera_fps(target_fps)
     camera_source = camera.get_video_source()
@@ -1467,7 +1596,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
         preview_source, analysis_source = _rtsp_stream_sources(camera_source)
         cap = _open_rtsp_camera(cv2, preview_source)
 
-        if analysis_source:
+        if _should_open_rtsp_analysis_stream(cv2, cap, analysis_source):
             analysis_cap = _open_rtsp_camera(cv2, analysis_source)
             if analysis_cap.isOpened():
                 analysis_reader = LatestFrameReader(
@@ -1488,6 +1617,14 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                     key=f"dual_stream_fallback_{camera.id}",
                     throttle_sec=10,
                 )
+        elif analysis_source and cap.isOpened():
+            preview_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            _log_line(
+                f"Substream RTSP suficiente ({preview_width}px); "
+                f"se omite stream principal: {camera_name}",
+                key=f"single_stream_adaptive_{camera.id}",
+                throttle_sec=10,
+            )
 
     if cap is None or not cap.isOpened():
         if analysis_reader is not None:
@@ -1546,13 +1683,43 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
             if should_stop is not None and should_stop():
                 break
 
-            first_no_frame_at = None
-
             now = time.monotonic()
 
             if not models_attached and _MODEL_PRELOAD_DONE.is_set():
                 risk_yolo_detector, ppe_model, face_rec = _attach_preloaded_models()
                 vision_event_detector = _load_vision_event_detector(key=f"camera:{camera.id}")
+                if risk_yolo_detector is not None:
+                    def run_risk_inference(source_frame):
+                        if not _HEAVY_INFERENCE_LOCK.acquire(blocking=False):
+                            return _INFERENCE_SKIPPED
+                        try:
+                            return risk_yolo_detector.detect(source_frame)
+                        finally:
+                            _HEAVY_INFERENCE_LOCK.release()
+
+                    risk_inference = LatestInferenceRunner(
+                        run_risk_inference,
+                        f"risk-inference-{camera.id}",
+                    )
+                if ppe_model is not None:
+                    def run_ppe_inference(source_frame):
+                        if not _HEAVY_INFERENCE_LOCK.acquire(blocking=False):
+                            return _INFERENCE_SKIPPED
+                        try:
+                            with _PPE_INFERENCE_LOCK:
+                                return ppe_model(
+                                    source_frame,
+                                    verbose=False,
+                                    imgsz=PPE_INFERENCE_IMGSZ,
+                                    conf=PPE_MODEL_CONFIDENCE,
+                                )[0]
+                        finally:
+                            _HEAVY_INFERENCE_LOCK.release()
+
+                    ppe_inference = LatestInferenceRunner(
+                        run_ppe_inference,
+                        f"ppe-inference-{camera.id}",
+                    )
                 models_attached = True
 
                 if (
@@ -1889,11 +2056,42 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                     2,
                 )
 
-            # YOLOv8s preentrenado para objetos de riesgo.
-            if frame_counter % risk_yolo_frame_interval == 0 and risk_yolo_detector is not None:
+            # YOLOv8s preentrenado para objetos de riesgo. La inferencia se
+            # ejecuta aparte para que el MJPEG siga avanzando mientras el
+            # modelo procesa el ultimo frame disponible.
+            ppe_inference_due = (
+                ppe_inference is not None
+                and frame_counter % ppe_frame_interval == 0
+            )
+            if (
+                risk_inference is not None
+                and frame_counter % risk_yolo_frame_interval == 0
+                and not ppe_inference_due
+            ):
+                risk_inference.submit(frame)
+
+            risk_completion = (
+                risk_inference.consume_latest()
+                if risk_inference is not None
+                else None
+            )
+            if (
+                risk_completion is not None
+                and risk_completion[0] is _INFERENCE_SKIPPED
+            ):
+                risk_completion = None
+            if risk_completion is not None:
                 try:
-                    risk_detections = risk_yolo_detector.detect(frame)
-                    frame = risk_yolo_detector.draw_detections(frame, risk_detections)
+                    (
+                        risk_detections,
+                        _risk_source_shape,
+                        risk_error,
+                        _risk_source_frame,
+                    ) = risk_completion
+                    if risk_error is not None:
+                        raise risk_error
+                    latest_risk_detections = risk_detections
+                    latest_risk_detections_at = time.monotonic()
 
                     for detection in risk_detections:
                         if detection.internal_label in {"cat", "dog", "bird"}:
@@ -1961,6 +2159,20 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         key=f"risk_yolo_detect_err_{camera.id}",
                         throttle_sec=5,
                     )
+
+            risk_overlay_ttl = max(
+                0.1,
+                float(getattr(settings, "DETECTION_OVERLAY_TTL_SECONDS", 2.0)),
+            )
+            if (
+                risk_yolo_detector is not None
+                and latest_risk_detections
+                and time.monotonic() - latest_risk_detections_at <= risk_overlay_ttl
+            ):
+                frame = risk_yolo_detector.draw_detections(
+                    frame,
+                    latest_risk_detections,
+                )
 
             if vision_event_detector is not None:
                 try:
@@ -2067,17 +2279,31 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         throttle_sec=5,
                     )
 
-            # PPE
-            if ppe_model is not None and frame_counter % ppe_frame_interval == 0:
+            # PPE: igual que YOLO de riesgo, solo se procesa el resultado en
+            # este hilo; la llamada pesada al modelo ocurre en segundo plano.
+            if ppe_inference_due:
+                ppe_inference.submit(high_resolution_frame)
+
+            ppe_completion = (
+                ppe_inference.consume_latest()
+                if ppe_inference is not None
+                else None
+            )
+            if (
+                ppe_completion is not None
+                and ppe_completion[0] is _INFERENCE_SKIPPED
+            ):
+                ppe_completion = None
+            if ppe_completion is not None:
                 try:
-                    ppe_source_frame = high_resolution_frame
-                    with _PPE_INFERENCE_LOCK:
-                        res = ppe_model(
-                            ppe_source_frame,
-                            verbose=False,
-                            imgsz=PPE_INFERENCE_IMGSZ,
-                            conf=PPE_MODEL_CONFIDENCE,
-                        )[0]
+                    (
+                        res,
+                        ppe_source_shape,
+                        ppe_error,
+                        ppe_evidence_frame,
+                    ) = ppe_completion
+                    if ppe_error is not None:
+                        raise ppe_error
                     boxes = res.boxes
                     names = res.names
                     supported_required_ppe_items = _get_supported_required_ppe_items(
@@ -2112,7 +2338,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                         source_box = tuple(map(int, b.xyxy[0].tolist()))
                         x1, y1, x2, y2 = _scale_box_between_frames(
                             source_box,
-                            ppe_source_frame.shape,
+                            ppe_source_shape,
                             frame.shape,
                         )
 
@@ -2187,7 +2413,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                             "Persona no autorizada detectada en el area "
                                             "monitoreada por deteccion corporal"
                                         ),
-                                        frame=evidence_frame.copy(),
+                                        frame=ppe_evidence_frame.copy(),
                                         camera=camera,
                                         epp_correcto=False,
                                         severity="ALTO",
@@ -2302,7 +2528,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 create_security_event(
                                     event_type="ppe_missing",
                                     details=msg,
-                                    frame=evidence_frame.copy(),
+                                    frame=ppe_evidence_frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
@@ -2389,7 +2615,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                                 create_security_event(
                                     event_type="ppe_missing",
                                     details=msg,
-                                    frame=evidence_frame.copy(),
+                                    frame=ppe_evidence_frame.copy(),
                                     camera=camera,
                                     authorized_person=authorized_person,
                                     epp_correcto=False,
@@ -2539,6 +2765,7 @@ class CameraStreamWorker:
         with self._frame_lock:
             self._latest_jpeg = jpeg_bytes
             self._latest_at = time.monotonic()
+            self._error = None
 
     def get_frame(self):
         with self._frame_lock:
@@ -2568,19 +2795,36 @@ class CameraStreamWorker:
 
     def _run(self):
         try:
-            _run_camera_pipeline(
-                camera=self.camera,
-                target_fps=self.target_fps,
-                emit_jpeg=self.publish_frame,
-                should_stop=self.should_stop,
-            )
-        except Exception as e:
-            self._error = str(e)
-            _log_line(
-                f"Error en worker de camara {self.camera_name}: {e}",
-                key=f"worker_error_{self.camera_id}",
-                throttle_sec=5,
-            )
+            while not self.should_stop():
+                try:
+                    _run_camera_pipeline(
+                        camera=self.camera,
+                        target_fps=self.target_fps,
+                        emit_jpeg=self.publish_frame,
+                        should_stop=self.should_stop,
+                    )
+                except Exception as e:
+                    self._error = str(e)
+                    _log_line(
+                        f"Error en worker de camara {self.camera_name}: {e}",
+                        key=f"worker_error_{self.camera_id}",
+                        throttle_sec=5,
+                    )
+
+                if self.should_stop():
+                    break
+
+                self.clear_frame()
+                reconnect_delay = max(
+                    0.25,
+                    float(getattr(settings, "RTSP_RECONNECT_DELAY_SECONDS", 2.0)),
+                )
+                _log_line(
+                    f"Reconectando camara {self.camera_name} en {reconnect_delay:.1f}s",
+                    key=f"camera_reconnect_{self.camera_id}",
+                    throttle_sec=5,
+                )
+                self._stop_event.wait(reconnect_delay)
         finally:
             self.clear_frame()
             close_old_connections()

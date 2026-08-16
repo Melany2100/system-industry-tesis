@@ -126,9 +126,9 @@ class AuthorizedPersonAdmin(admin.ModelAdmin):
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
     actions = ("activate_cameras", "deactivate_cameras")
-    list_display = ('id', 'nombre', 'source', 'ubicacion', 'is_active', 'last_seen')
+    list_display = ('id', 'nombre', 'source', 'stream_path', 'ubicacion', 'is_active', 'last_seen')
     list_filter = ('is_active',)
-    search_fields = ('nombre', 'source', 'ubicacion')
+    search_fields = ('nombre', 'source', 'stream_path', 'ubicacion')
     readonly_fields = ('last_seen',)
 
     @admin.action(description="Activar camaras seleccionadas")

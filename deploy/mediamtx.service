@@ -1,0 +1,17 @@
+[Unit]
+Description=MediaMTX media server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mediamtx
+Group=mediamtx
+ExecStart=/usr/local/bin/mediamtx /usr/local/etc/mediamtx.yml
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,7 @@ import os
 import sys
 
 from django.apps import AppConfig
+from django.conf import settings
 
 
 class CameraConfig(AppConfig):
@@ -9,6 +10,9 @@ class CameraConfig(AppConfig):
     name = 'core_apps.camera'
 
     def ready(self):
+        if not getattr(settings, "SMRI_EDGE_ENABLED", False):
+            return
+
         if not any(command in sys.argv for command in ("runserver", "runserver_plus")):
             return
 

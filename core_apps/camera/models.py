@@ -229,6 +229,15 @@ class DetectionFunction(models.Model):
 class Camera(models.Model):
     nombre = models.CharField(max_length=100)
     source = models.CharField(max_length=500)
+    stream_path = models.SlugField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text=(
+            "Ruta publicada en MediaMTX, sin dominio ni barras. "
+            "Si queda vacía se usará camera-ID."
+        ),
+    )
     ubicacion = models.CharField(max_length=200, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     last_seen = models.DateTimeField(blank=True, null=True)
@@ -248,3 +257,7 @@ class Camera(models.Model):
             return int(source)
 
         return source
+
+    def get_stream_path(self):
+        """Devuelve una ruta estable para reproducir esta cámara en MediaMTX."""
+        return self.stream_path.strip() or f"camera-{self.pk}"

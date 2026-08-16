@@ -77,6 +77,38 @@ def env_bool(name, default):
 
 
 # ============================================================
+# ROL DE EJECUCIÓN
+# ============================================================
+
+# "edge" conserva el comportamiento local existente. En DigitalOcean se debe
+# definir SMRI_NODE_ROLE=cloud para impedir que el proceso web abra cámaras o
+# cargue los modelos de visión artificial.
+SMRI_NODE_ROLE = os.getenv(
+    "SMRI_NODE_ROLE",
+    "edge",
+).strip().lower()
+
+if SMRI_NODE_ROLE not in {"cloud", "edge"}:
+    raise ValueError(
+        "SMRI_NODE_ROLE debe ser 'cloud' o 'edge'."
+    )
+
+SMRI_EDGE_ENABLED = SMRI_NODE_ROLE == "edge"
+
+# URL pública del servidor MediaMTX, por ejemplo: https://media.midominio.com
+# El nodo cloud la usa para mostrar el stream sin cargar OpenCV ni modelos.
+MEDIAMTX_PUBLIC_URL = os.getenv("MEDIAMTX_PUBLIC_URL", "").strip().rstrip("/")
+
+# El nodo edge publica los fotogramas ya procesados mediante FFmpeg. Se deja
+# vacío por defecto para conservar el funcionamiento local sin MediaMTX.
+MEDIAMTX_PUBLISH_BASE_URL = os.getenv(
+    "MEDIAMTX_PUBLISH_BASE_URL",
+    "",
+).strip().rstrip("/")
+FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg").strip() or "ffmpeg"
+
+
+# ============================================================
 # CRITERIOS OPERATIVOS DEL SISTEMA
 # ============================================================
 
@@ -472,6 +504,14 @@ SECURE_SSL_REDIRECT = os.getenv(
     "SECURE_SSL_REDIRECT",
     "False",
 ).lower() == "true"
+
+# Nginx termina TLS en producción y conserva el esquema original en este header.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
 
 
 # ============================================================

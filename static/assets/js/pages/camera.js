@@ -15,6 +15,7 @@ $(document).ready(function () {
       events: $page.data('events-url'),
       registerFace: $page.data('register-face-url')
     },
+    streamMode: String($page.data('stream-mode') || 'mjpeg'),
     targetVideoFps: Number($page.data('target-video-fps')) || 8,
     eventsRefreshMs: Number($page.data('events-refresh-ms')) || 5000,
     liveLogRefreshMs: Number($page.data('live-log-refresh-ms')) || 800,
@@ -95,6 +96,10 @@ $(document).ready(function () {
   }
 
   function loadCameraStatus() {
+    // En cloud el video llega directamente desde MediaMTX. El worker de Django
+    // no abre la cámara y, por tanto, no debe usarse para determinar su estado.
+    if (APP_CONFIG.streamMode === 'mediamtx') return;
+
     const statusUrl = getSelectedCameraStatusUrl();
 
     if (!statusUrl) {
@@ -122,14 +127,28 @@ $(document).ready(function () {
     });
   }
 
-  function ensureVideoFeedExists() {
-    if ($('#videoFeed').length) return;
+  function ensureVideoFeedExists(streamKind) {
+    const expectedTag = streamKind === 'mediamtx' ? 'IFRAME' : 'IMG';
+    const currentFeed = document.getElementById('videoFeed');
+
+    if (currentFeed && currentFeed.tagName === expectedTag) return;
+    if (currentFeed) currentFeed.remove();
+
+    if (streamKind === 'mediamtx') {
+      $('#cameraScreen').prepend(`
+        <iframe
+          class="camera-feed"
+          id="videoFeed"
+          title="Video en vivo"
+          allow="autoplay; fullscreen; picture-in-picture"
+          referrerpolicy="same-origin"
+          allowfullscreen></iframe>
+      `);
+      return;
+    }
 
     $('#cameraScreen').prepend(`
-      <img
-        class="camera-feed"
-        id="videoFeed"
-        alt="Video en vivo">
+      <img class="camera-feed" id="videoFeed" alt="Video en vivo">
     `);
   }
 
@@ -162,6 +181,7 @@ $(document).ready(function () {
     }
 
     const videoUrl = $selectedOption.val();
+    const streamKind = String($selectedOption.data('stream-kind') || APP_CONFIG.streamMode);
     const label = $selectedOption.data('label');
     const isActive = String($selectedOption.data('active')) === 'true';
 
@@ -183,15 +203,35 @@ $(document).ready(function () {
       return;
     }
 
-    $('#noCameraBox').remove();
-    ensureVideoFeedExists();
+    if (!videoUrl || streamKind === 'unconfigured') {
+      showNoCameraBox('Configura MEDIAMTX_PUBLIC_URL en el servidor.');
+      setCameraStatus({
+        status: 'no_signal',
+        message: 'Falta configurar la URL pública de MediaMTX.'
+      });
+      return;
+    }
 
-    const finalUrl = videoUrl + '?fps=' + APP_CONFIG.targetVideoFps + '&t=' + Date.now();
+    $('#noCameraBox').remove();
+    ensureVideoFeedExists(streamKind);
+
+    const finalUrl = streamKind === 'mediamtx'
+      ? videoUrl
+      : videoUrl + '?fps=' + APP_CONFIG.targetVideoFps + '&t=' + Date.now();
 
     lastVideoErrorAt = 0;
 
     $('#videoFeed')
+    .off('load')
     .off('error')
+    .on('load', function () {
+      if (streamKind === 'mediamtx') {
+        setCameraStatus({
+          status: 'active',
+          message: 'Reproductor WebRTC conectado a MediaMTX.'
+        });
+      }
+    })
     .on('error', function () {
         lastVideoErrorAt = Date.now();
 
@@ -208,7 +248,9 @@ $(document).ready(function () {
     message: 'Verificando señal de la cámara...'
     });
 
-    setTimeout(loadCameraStatus, 1500);
+    if (streamKind !== 'mediamtx') {
+      setTimeout(loadCameraStatus, 1500);
+    }
   }
 
   $('#cameraSelector').on('change', changeCamera);
@@ -228,6 +270,11 @@ $(document).ready(function () {
   });
 
   $('#snapshotBtn').on('click', function () {
+    if (APP_CONFIG.streamMode === 'mediamtx') {
+      alert('La captura desde el navegador no está disponible para el reproductor WebRTC.');
+      return;
+    }
+
     const img = document.getElementById('videoFeed');
 
     if (!img) {

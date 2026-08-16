@@ -1,8 +1,4 @@
-﻿from core_apps import camera
-from core_apps.camera.utils import cv2
-
 import os
-import cv2
 import json
 import re
 import time
@@ -18,7 +14,7 @@ from django.core.files.base import ContentFile
 from django.core.validators import validate_email
 from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Count, Q
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
@@ -1027,6 +1023,24 @@ def live_status(request):
 # =========================
 # Safe imports
 # =========================
+def _edge_runtime_enabled() -> bool:
+    return bool(getattr(settings, "SMRI_EDGE_ENABLED", False))
+
+
+def _edge_runtime_unavailable_response():
+    return JsonResponse(
+        {
+            "success": False,
+            "code": "edge_runtime_disabled",
+            "message": (
+                "La captura de cámaras y los modelos de detección están "
+                "deshabilitados en este nodo cloud."
+            ),
+        },
+        status=503,
+    )
+
+
 def _safe_import_cv2():
     try:
         import cv2  # type: ignore
@@ -1065,6 +1079,9 @@ _FACE_RECOGNITION_INFERENCE_LOCK = Lock()
 
 
 def _load_face_recognition():
+    if not _edge_runtime_enabled():
+        return None
+
     with _IMPORT_CACHE_LOCK:
         if _FACE_RECOGNITION_CACHE["attempted"]:
             return _FACE_RECOGNITION_CACHE["module"]
@@ -1098,6 +1115,9 @@ _VISION_EVENT_LOAD_LOCK = Lock()
 
 
 def _load_ppe_model():
+    if not _edge_runtime_enabled():
+        return None
+
     with _PPE_LOAD_LOCK:
         return _load_ppe_model_locked()
 
@@ -1135,6 +1155,9 @@ def _load_ppe_model_locked():
 
 
 def _load_risk_yolo_detector():
+    if not _edge_runtime_enabled():
+        return None
+
     with _RISK_YOLO_LOAD_LOCK:
         if _RISK_YOLO_CACHE["detector"] is not None:
             return _RISK_YOLO_CACHE["detector"]
@@ -1152,6 +1175,9 @@ def _load_risk_yolo_detector():
 
 
 def _load_vision_event_detector(key="preload"):
+    if not _edge_runtime_enabled():
+        return None
+
     with _VISION_EVENT_LOAD_LOCK:
         if key in _VISION_EVENT_CACHE["detectors"]:
             return _VISION_EVENT_CACHE["detectors"][key]
@@ -1189,9 +1215,13 @@ def _preload_camera_models_task():
 def preload_camera_models(async_load: bool = True):
     global _MODEL_PRELOAD_STARTED
 
+    if not _edge_runtime_enabled():
+        _MODEL_PRELOAD_DONE.set()
+        return False
+
     with _MODEL_PRELOAD_LOCK:
         if _MODEL_PRELOAD_STARTED:
-            return
+            return False
 
         _MODEL_PRELOAD_STARTED = True
 
@@ -1203,6 +1233,8 @@ def preload_camera_models(async_load: bool = True):
         ).start()
     else:
         _preload_camera_models_task()
+
+    return True
 
 
 def _attach_preloaded_models():
@@ -2717,6 +2749,7 @@ class CameraStreamWorker:
         self.camera_id = camera.id
         self.camera_source = camera.source
         self.camera_name = camera.nombre
+        self.stream_path = camera.get_stream_path()
         self.target_fps = _bounded_camera_fps(target_fps)
         self.keep_alive = keep_alive
         self._frame_lock = Lock()
@@ -2726,6 +2759,13 @@ class CameraStreamWorker:
         self._stop_event = Event()
         self._finished = Event()
         self._error = None
+        from core_apps.camera.services.mediamtx_publisher import (
+            build_mediamtx_publisher,
+        )
+        self._mediamtx_publisher = build_mediamtx_publisher(
+            camera,
+            self.target_fps,
+        )
         self._thread = Thread(
             target=self._run,
             name=f"camera-stream-{self.camera_id}",
@@ -2733,10 +2773,16 @@ class CameraStreamWorker:
         )
 
     def start(self):
+        if self._mediamtx_publisher is not None:
+            self._mediamtx_publisher.start()
         self._thread.start()
 
     def matches(self, camera: Camera) -> bool:
-        return self.camera_source == camera.source and self.camera_name == camera.nombre
+        return (
+            self.camera_source == camera.source
+            and self.camera_name == camera.nombre
+            and self.stream_path == camera.get_stream_path()
+        )
 
     def is_alive(self) -> bool:
         return self._thread.is_alive() and not self._finished.is_set()
@@ -2750,6 +2796,8 @@ class CameraStreamWorker:
 
     def stop(self):
         self._stop_event.set()
+        if self._mediamtx_publisher is not None:
+            self._mediamtx_publisher.stop()
 
     def should_stop(self) -> bool:
         if self._stop_event.is_set():
@@ -2766,6 +2814,9 @@ class CameraStreamWorker:
             self._latest_jpeg = jpeg_bytes
             self._latest_at = time.monotonic()
             self._error = None
+
+        if self._mediamtx_publisher is not None:
+            self._mediamtx_publisher.publish(jpeg_bytes)
 
     def get_frame(self):
         with self._frame_lock:
@@ -2826,6 +2877,8 @@ class CameraStreamWorker:
                 )
                 self._stop_event.wait(reconnect_delay)
         finally:
+            if self._mediamtx_publisher is not None:
+                self._mediamtx_publisher.stop()
             self.clear_frame()
             close_old_connections()
             self._finished.set()
@@ -2836,6 +2889,11 @@ def _get_or_start_camera_worker(
     target_fps: int,
     keep_alive: bool = False,
 ) -> CameraStreamWorker:
+    if not _edge_runtime_enabled():
+        raise RuntimeError(
+            "Los workers de cámara solo pueden iniciarse en un nodo edge."
+        )
+
     with _CAMERA_WORKERS_LOCK:
         worker = _CAMERA_WORKERS.get(camera.id)
 
@@ -2858,6 +2916,9 @@ def _get_or_start_camera_worker(
 
 
 def autostart_active_camera_workers(target_fps: int = 8):
+    if not _edge_runtime_enabled():
+        return 0
+
     started = 0
     skipped = 0
 
@@ -2948,6 +3009,9 @@ def video_feed(request, camera_id):
     if not is_admin_user(request.user):
         return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
 
+    if not _edge_runtime_enabled():
+        return _edge_runtime_unavailable_response()
+
     camera = get_object_or_404(Camera, id=camera_id, is_active=True)
     fps = _get_request_fps(request)
     cv2 = _safe_import_cv2()
@@ -2964,6 +3028,9 @@ def video_feed(request, camera_id):
 def video_feed_default(request):
     if not is_admin_user(request.user):
         return _json_forbidden("Solo un administrador puede visualizar el stream de camara.")
+
+    if not _edge_runtime_enabled():
+        return _edge_runtime_unavailable_response()
 
     camera = Camera.objects.filter(is_active=True).order_by("id").first()
 
@@ -3087,6 +3154,9 @@ def camera_status(request, camera_id):
 def register_face(request):
     if not is_admin_user(request.user):
         return _json_forbidden("Solo un administrador puede registrar rostros autorizados.")
+
+    if not _edge_runtime_enabled():
+        return _edge_runtime_unavailable_response()
 
     if request.method != "POST":
         return JsonResponse(
@@ -3458,6 +3528,18 @@ def mark_event_as_resolved(request, event_id):
     return mark_event_resolved(request, event_id)
 
 
+@csrf_exempt
+def media_auth(request):
+    """Autoriza a Nginx a servir MediaMTX con la sesión actual de Django."""
+    if (
+        request.user.is_authenticated
+        and request.user.is_active
+        and is_admin_user(request.user)
+    ):
+        return HttpResponse(status=204)
+    return HttpResponse(status=401)
+
+
 class CameraView(AdminRequiredMixin, TemplateView):
     template_name = "camera/camera.html"
 
@@ -3470,6 +3552,11 @@ class CameraView(AdminRequiredMixin, TemplateView):
         context["segment"] = "camera"
         context["cameras"] = cameras
         context["selected_camera"] = selected_camera
+        context["edge_runtime_enabled"] = settings.SMRI_EDGE_ENABLED
+        context["camera_stream_mode"] = (
+            "mjpeg" if settings.SMRI_EDGE_ENABLED else "mediamtx"
+        )
+        context["mediamtx_public_url"] = settings.MEDIAMTX_PUBLIC_URL
         context["target_video_fps"] = getattr(settings, "SYSTEM_TARGET_VIDEO_FPS", 8)
         context["events_refresh_ms"] = getattr(settings, "SYSTEM_EVENTS_REFRESH_MS", 5000)
         context["live_log_refresh_ms"] = getattr(settings, "SYSTEM_LIVE_LOG_REFRESH_MS", 800)

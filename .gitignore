@@ -135,6 +135,7 @@ celerybeat.pid
 yolo-risk-env/
 env/
 venv/
+venv312/
 ENV/
 env.bak/
 venv.bak/
@@ -197,5 +198,7 @@ dataset/
 
 # Modelos pesados
 *.pt
-!camera/ppe_sh17_yolov8s.pt
 *.onnx
+
+# Generado por python manage.py collectstatic
+staticfiles/

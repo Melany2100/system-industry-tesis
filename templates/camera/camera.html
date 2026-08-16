@@ -3,7 +3,7 @@
 
 {% block stylesheets %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'assets/css/pages/cameras.css' %}?v=20260730-3">
+<link rel="stylesheet" href="{% static 'assets/css/pages/cameras.css' %}?v=20260815-1">
 {% endblock stylesheets %}
 
 {% block content %}
@@ -11,6 +11,7 @@
   class="security-page"
   data-events-url="{% url 'get_security_events' %}"
   data-register-face-url="{% url 'register_face' %}"
+  data-stream-mode="{{ camera_stream_mode }}"
   data-target-video-fps="{{ target_video_fps|default:8 }}"
   data-events-refresh-ms="{{ events_refresh_ms|default:5000 }}"
   data-live-log-refresh-ms="{{ live_log_refresh_ms|default:800 }}"
@@ -61,7 +62,18 @@
           <select id="cameraSelector" class="camera-select">
             {% for camera in cameras %}
               <option
+                {% if camera_stream_mode == 'mediamtx' %}
+                  {% if mediamtx_public_url %}
+                  value="{{ mediamtx_public_url }}/{{ camera.get_stream_path }}?controls=false&amp;muted=true&amp;autoplay=true&amp;playsInline=true"
+                  data-stream-kind="mediamtx"
+                  {% else %}
+                  value=""
+                  data-stream-kind="unconfigured"
+                  {% endif %}
+                {% else %}
                 value="{% url 'video_feed_camera' camera.id %}"
+                data-stream-kind="mjpeg"
+                {% endif %}
                 data-status-url="{% url 'camera_status' camera.id %}"
                 data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}"
                 data-active="{{ camera.is_active|yesno:'true,false' }}"
@@ -84,11 +96,29 @@
 
       <div class="camera-screen" id="cameraScreen">
         {% if selected_camera and selected_camera.is_active %}
+          {% if camera_stream_mode == 'mediamtx' %}
+            {% if mediamtx_public_url %}
+              <iframe
+                src="{{ mediamtx_public_url }}/{{ selected_camera.get_stream_path }}?controls=false&amp;muted=true&amp;autoplay=true&amp;playsInline=true"
+                class="camera-feed"
+                id="videoFeed"
+                title="Video en vivo"
+                allow="autoplay; fullscreen; picture-in-picture"
+                referrerpolicy="same-origin"
+                allowfullscreen></iframe>
+            {% else %}
+              <div class="no-camera-box" id="noCameraBox">
+                <i class="fas fa-video-slash"></i>
+                <span>Configura MEDIAMTX_PUBLIC_URL en el servidor.</span>
+              </div>
+            {% endif %}
+          {% else %}
           <img
             src="{% url 'video_feed_camera' selected_camera.id %}?fps={{ target_video_fps|default:8 }}"
             class="camera-feed"
             id="videoFeed"
             alt="Video en vivo">
+          {% endif %}
         {% else %}
           <div class="no-camera-box" id="noCameraBox">
             <i class="fas fa-video-slash"></i>
@@ -161,7 +191,7 @@
         </div>
       </div>
 
-      {% if request.user.is_authenticated %}
+      {% if request.user.is_authenticated and edge_runtime_enabled %}
       <div class="dashboard-card personnel-registration-card">
         <div class="personnel-registration-content">
           <div>
@@ -181,7 +211,7 @@
   </div>
 </div>
 
-{% if request.user.is_authenticated %}
+{% if request.user.is_authenticated and edge_runtime_enabled %}
 <!-- MODAL REGISTRO DE PERSONAL -->
 <div class="modal fade" id="personnelRegistrationModal" tabindex="-1" aria-labelledby="personnelRegistrationTitle" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable personnel-registration-dialog">
@@ -276,5 +306,5 @@
 
 {% block javascripts %}
 {{ block.super }}
-<script src="{% static 'assets/js/pages/camera.js' %}?v=20260730-3"></script>
+<script src="{% static 'assets/js/pages/camera.js' %}?v=20260815-1"></script>
 {% endblock javascripts %}

@@ -1,0 +1,40 @@
+logLevel: info
+
+authMethod: internal
+authInternalUsers:
+  # Cambiar esta contraseña también en MEDIAMTX_PUBLISH_BASE_URL del nodo local.
+  - user: publisher
+    pass: CAMBIAR_PASSWORD_PUBLICACION
+    ips: []
+    permissions:
+      - action: publish
+        path: ~^[a-zA-Z0-9_-]+$
+
+  # Las lecturas llegan únicamente desde Nginx, que valida la sesión Django.
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: read
+        path: ~^[a-zA-Z0-9_-]+$
+      - action: playback
+        path: ~^[a-zA-Z0-9_-]+$
+      - action: api
+
+rtsp: true
+rtspAddress: :8554
+rtmp: false
+hls: false
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcAllowOrigins: ["https://app.midominio.com"]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+webrtcAdditionalHosts: ["IP_PUBLICA_DROPLET", "app.midominio.com"]
+
+api: true
+apiAddress: 127.0.0.1:9997
+
+paths:
+  all_others:

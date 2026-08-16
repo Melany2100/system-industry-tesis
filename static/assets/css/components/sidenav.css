@@ -21,7 +21,8 @@
   padding: 1.25rem 0.9rem !important;
   display: flex !important;
   flex-direction: column !important;
-  overflow: hidden !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
 /* Marca */
@@ -213,7 +214,12 @@
 
 /* Logout */
 .custom-sidenav__bottom {
-  margin-top: 0.75rem !important;
+  margin-top: auto !important;
+  padding-top: 0.75rem !important;
+  position: sticky !important;
+  bottom: 0 !important;
+  background: var(--color-surface) !important;
+  z-index: 2 !important;
 }
 
 .custom-sidenav__logout {
@@ -223,8 +229,8 @@
   min-height: 2.45rem !important;
   padding: 0 0.85rem !important;
   border-radius: 0.9rem !important;
-  color: var(--color-text-muted) !important;
-  background: transparent !important;
+  color: #ffffff !important;
+  background: var(--color-primary) !important;
   text-decoration: none !important;
   font-size: 0.9rem !important;
   font-weight: 500 !important;
@@ -232,8 +238,8 @@
 }
 
 .custom-sidenav__logout:hover {
-  background: rgba(var(--color-light-rgb), 0.30) !important;
-  color: var(--color-dark) !important;
+  background: var(--color-dark) !important;
+  color: #ffffff !important;
 }
 
 /* Responsive */

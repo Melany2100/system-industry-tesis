@@ -3,14 +3,19 @@
 
 {% block stylesheets %}
 {{ block.super }}
-<link rel="stylesheet" href="{% static 'assets/css/pages/cameras.css' %}">
+<link rel="stylesheet" href="{% static 'assets/css/pages/cameras.css' %}?v=20260815-1">
 {% endblock stylesheets %}
 
 {% block content %}
 <div
   class="security-page"
   data-events-url="{% url 'get_security_events' %}"
-  data-register-face-url="{% url 'register_face' %}">
+  data-register-face-url="{% url 'register_face' %}"
+  data-stream-mode="{{ camera_stream_mode }}"
+  data-target-video-fps="{{ target_video_fps|default:8 }}"
+  data-events-refresh-ms="{{ events_refresh_ms|default:5000 }}"
+  data-live-log-refresh-ms="{{ live_log_refresh_ms|default:800 }}"
+  data-camera-status-refresh-ms="{{ camera_status_refresh_ms|default:3000 }}">
 
   <!-- Encabezado -->
   <div class="security-header">
@@ -57,7 +62,18 @@
           <select id="cameraSelector" class="camera-select">
             {% for camera in cameras %}
               <option
+                {% if camera_stream_mode == 'mediamtx' %}
+                  {% if mediamtx_public_url %}
+                  value="{{ mediamtx_public_url }}/{{ camera.get_stream_path }}?controls=false&amp;muted=true&amp;autoplay=true&amp;playsInline=true"
+                  data-stream-kind="mediamtx"
+                  {% else %}
+                  value=""
+                  data-stream-kind="unconfigured"
+                  {% endif %}
+                {% else %}
                 value="{% url 'video_feed_camera' camera.id %}"
+                data-stream-kind="mjpeg"
+                {% endif %}
                 data-status-url="{% url 'camera_status' camera.id %}"
                 data-label="{{ camera.nombre }} · {{ camera.ubicacion|default:'Sin ubicación' }}"
                 data-active="{{ camera.is_active|yesno:'true,false' }}"
@@ -80,11 +96,29 @@
 
       <div class="camera-screen" id="cameraScreen">
         {% if selected_camera and selected_camera.is_active %}
+          {% if camera_stream_mode == 'mediamtx' %}
+            {% if mediamtx_public_url %}
+              <iframe
+                src="{{ mediamtx_public_url }}/{{ selected_camera.get_stream_path }}?controls=false&amp;muted=true&amp;autoplay=true&amp;playsInline=true"
+                class="camera-feed"
+                id="videoFeed"
+                title="Video en vivo"
+                allow="autoplay; fullscreen; picture-in-picture"
+                referrerpolicy="same-origin"
+                allowfullscreen></iframe>
+            {% else %}
+              <div class="no-camera-box" id="noCameraBox">
+                <i class="fas fa-video-slash"></i>
+                <span>Configura MEDIAMTX_PUBLIC_URL en el servidor.</span>
+              </div>
+            {% endif %}
+          {% else %}
           <img
-            src="{% url 'video_feed_camera' selected_camera.id %}?fps=8"
+            src="{% url 'video_feed_camera' selected_camera.id %}?fps={{ target_video_fps|default:8 }}"
             class="camera-feed"
             id="videoFeed"
             alt="Video en vivo">
+          {% endif %}
         {% else %}
           <div class="no-camera-box" id="noCameraBox">
             <i class="fas fa-video-slash"></i>
@@ -157,18 +191,40 @@
         </div>
       </div>
 
-      {% if request.user.is_authenticated %}
-      <!-- REGISTRO FACIAL -->
-      <div class="dashboard-card face-card">
-        <div class="card-custom-header">
+      {% if request.user.is_authenticated and edge_runtime_enabled %}
+      <div class="dashboard-card personnel-registration-card">
+        <div class="personnel-registration-content">
           <div>
-            <h4>Registro Facial</h4>
-            <span>Alta de rostro autorizado</span>
+            <h4>Personal autorizado</h4>
+            <span>Registra los datos y el rostro del personal con acceso permitido.</span>
           </div>
-
           <i class="fas fa-user-shield header-icon"></i>
         </div>
+        <button type="button" class="primary-action-btn personnel-registration-btn" data-bs-toggle="modal" data-bs-target="#personnelRegistrationModal">
+          <i class="fas fa-user-plus me-2"></i>
+          Registrar personal autorizado
+        </button>
+      </div>
+      {% endif %}
 
+    </aside>
+  </div>
+</div>
+
+{% if request.user.is_authenticated and edge_runtime_enabled %}
+<!-- MODAL REGISTRO DE PERSONAL -->
+<div class="modal fade" id="personnelRegistrationModal" tabindex="-1" aria-labelledby="personnelRegistrationTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable personnel-registration-dialog">
+    <div class="modal-content personnel-registration-modal">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="personnelRegistrationTitle">Registro de personal autorizado</h5>
+          <span>Completa los datos y adjunta una fotografía frontal.</span>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
         <form id="registerFaceForm" enctype="multipart/form-data">
           <div class="face-capture-preview" id="facePreview">
             <i class="fas fa-user-circle"></i>
@@ -176,80 +232,56 @@
           </div>
 
           <div class="form-group-custom">
-            <label>Nombres</label>
-            <input
-              type="text"
-              class="form-control"
-              id="authorizedNombres"
-              name="nombres"
-              placeholder="Ej. Juan Carlos">
+            <label for="authorizedNombres">Nombres</label>
+            <input type="text" class="form-control" id="authorizedNombres" name="nombres" placeholder="Ej. Juan Carlos">
           </div>
 
           <div class="form-group-custom">
-            <label>Apellidos</label>
-            <input
-              type="text"
-              class="form-control"
-              id="authorizedApellidos"
-              name="apellidos"
-              placeholder="Ej. Pérez Vera">
+            <label for="authorizedApellidos">Apellidos</label>
+            <input type="text" class="form-control" id="authorizedApellidos" name="apellidos" placeholder="Ej. Pérez Vera">
           </div>
 
           <div class="form-group-custom">
-            <label>Celular</label>
-            <input
-              type="text"
-              class="form-control"
-              id="authorizedCelular"
-              name="celular"
-              placeholder="Ej. 0999999999">
+            <label for="authorizedCelular">Celular</label>
+            <input type="text" class="form-control" id="authorizedCelular" name="celular" placeholder="Ej. 0999999999">
           </div>
 
           <div class="form-group-custom">
-            <label>Correo</label>
-            <input
-              type="email"
-              class="form-control"
-              id="authorizedCorreo"
-              name="correo"
-              placeholder="persona@empresa.com">
+            <label for="authorizedCorreo">Correo</label>
+            <input type="email" class="form-control" id="authorizedCorreo" name="correo" placeholder="persona@empresa.com">
           </div>
 
           <div class="form-group-custom">
-            <label>Cargo</label>
-            <input
-              type="text"
-              class="form-control"
-              id="authorizedCargo"
-              name="cargo"
-              placeholder="Ej. Operador de planta">
+            <label for="authorizedCargo">Cargo</label>
+            <input type="text" class="form-control" id="authorizedCargo" name="cargo" placeholder="Ej. Operador de planta">
           </div>
 
           <div class="form-group-custom">
-            <label>Captura facial</label>
-            <input
-              type="file"
-              class="form-control"
-              id="faceImage"
-              name="image"
-              accept="image/*"
-              capture="user">
-            <small>Procura usar una imagen clara, frontal y con buena iluminación.</small>
+            <label for="faceImage" class="d-flex align-items-center">
+              Fotografía facial
+              <i class="fas fa-info-circle text-muted ms-2"
+                 data-bs-toggle="tooltip"
+                 data-bs-placement="top"
+                 title="Tamaño máximo permitido: 10 MB. Formatos aceptados: JPG/JPEG, PNG y WEBP."
+                 style="cursor: help;">
+              </i>
+            </label>
+            <input type="file" class="form-control" id="faceImage" name="image" accept="image/jpeg,image/png,image/webp" capture="user">
+            <small>Utiliza una imagen clara, frontal y con buena iluminación.</small>
           </div>
 
           <button type="submit" class="primary-action-btn" id="registerBtn">
             <i class="fas fa-user-plus me-2"></i>
-            Registrar rostro autorizado
+            Registrar personal autorizado
           </button>
         </form>
 
         <div id="registrationResult" class="mt-3"></div>
       </div>
-      {% endif %}
-
-    </aside>
+    </div>
   </div>
 </div>
+{% endif %}
 
 <!-- MODAL EVIDENCIA -->
 <div class="modal fade" id="eventImageModal" tabindex="-1" aria-hidden="true">
@@ -274,5 +306,5 @@
 
 {% block javascripts %}
 {{ block.super }}
-<script src="{% static 'assets/js/pages/camera.js' %}"></script>
+<script src="{% static 'assets/js/pages/camera.js' %}?v=20260815-1"></script>
 {% endblock javascripts %}

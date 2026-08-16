@@ -417,6 +417,7 @@
   font-size: .8rem;
   line-height: 1.35;
   max-width: 310px;
+  white-space: pre-line;
 }
 
 .alert-user,
@@ -465,6 +466,7 @@
   color: #b45309;
 }
 
+.status-danger,
 .priority-danger {
   background: rgba(239, 68, 68, .12);
   color: #b91c1c;
@@ -631,6 +633,7 @@
 .info-line-column strong {
   text-align: left;
   line-height: 1.4;
+  white-space: pre-line;
 }
 
 .alert-location-box,
@@ -692,6 +695,11 @@
 .modal-btn-primary {
   background: var(--alerts-primary);
   color: #fff;
+}
+
+.modal-btn-email {
+  background: #e0f2fe;
+  color: #0369a1;
 }
 
 .modal-btn-primary:disabled {

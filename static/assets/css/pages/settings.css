@@ -149,6 +149,13 @@
   color: var(--settings-text);
 }
 
+.settings-header-text {
+  margin: 6px 0 0;
+  color: var(--settings-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .settings-search {
   width: 280px;
   height: 38px;
@@ -495,4 +502,43 @@
 
 .settings-feedback.info {
   color: var(--settings-muted);
+}
+
+.settings-user-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(19, 60, 85, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.settings-user-row div {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-user-row strong {
+  color: var(--settings-text);
+}
+
+.settings-user-row span {
+  color: var(--settings-muted);
+  font-size: 13px;
+}
+
+.settings-role-badge {
+  border-radius: 999px;
+  background: rgba(56, 111, 164, 0.12);
+  color: #386FA4 !important;
+  padding: 6px 10px;
+  font-weight: 800;
+  white-space: nowrap;
 }

@@ -1,12 +1,12 @@
 import json
+from pathlib import Path
 
+from django.conf import settings
 from django.views.generic import TemplateView
-from django import forms
 from django.shortcuts import render
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth import update_session_auth_hash
-from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -14,26 +14,138 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
 from django.utils import timezone
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from datetime import timedelta
 
-from core_apps.camera.models import SecurityEvent, AuthorizedPerson
+from core_apps.camera.models import SecurityEvent, AuthorizedPerson, Camera
 from core_apps.common.models import UserSetting
+from core_apps.common.permissions import (
+    can_manage_users,
+    get_authorized_person_for_user,
+    get_user_role_label,
+    is_admin_user,
+    is_system_admin,
+)
 from core_apps.informes.models import Informe
 
-from django.shortcuts import render, redirect
-from django.contrib.auth.forms import UserCreationForm
-from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+
+SYSTEM_ROLE_GROUPS = {
+    "admin": "Administrador",
+    "operador": "Operador",
+    "jefe": "Jefe",
+}
+
+
+def _activate_cameras_for_admin(user):
+    if not is_admin_user(user):
+        return 0
+
+    Camera.objects.filter(is_active=False).update(is_active=True)
+    return Camera.objects.filter(is_active=True).count()
+
+
+def _ai_model_status():
+    model_paths = [
+        getattr(settings, "RISK_YOLO_MODEL_PATH", None),
+        getattr(settings, "YOLO_OBJECT_MODEL_PATH", None),
+        getattr(settings, "YOLO_POSE_MODEL_PATH", None),
+        getattr(settings, "YOLO_FAST_MODEL_PATH", None),
+        getattr(settings, "PPE_MODEL_PATH", None),
+    ]
+    base_dir = getattr(settings, "BASE_DIR", None)
+
+    if base_dir:
+        model_paths.append(Path(base_dir) / "camera" / "ppe.pt")
+
+    existing = [path for path in model_paths if path and Path(path).exists()]
+
+    if not existing:
+        return {
+            "label": "No disponible",
+            "class": "text-danger",
+        }
+
+    if len(existing) < 3:
+        return {
+            "label": "Parcial",
+            "class": "text-warning",
+        }
+
+    return {
+        "label": "Activo",
+        "class": "text-success",
+    }
+
+
+def _ensure_system_groups():
+    return {
+        role: Group.objects.get_or_create(name=group_name)[0]
+        for role, group_name in SYSTEM_ROLE_GROUPS.items()
+    }
+
+
+def _assign_system_role(user, role):
+    groups = _ensure_system_groups()
+    selected_group = groups[role]
+    user.groups.remove(*groups.values())
+    user.groups.add(selected_group)
+
+    if role == "admin":
+        user.is_staff = True
+        user.is_superuser = True
+    elif role == "jefe":
+        user.is_staff = False
+        user.is_superuser = False
+    else:
+        user.is_staff = False
+        user.is_superuser = False
+
+    user.save(update_fields=["is_staff", "is_superuser"])
+
 
 @login_required
 def settings_view(request):
     user_settings, _ = UserSetting.objects.get_or_create(user=request.user)
+    managed_users = []
+    available_user_roles = []
+
+    if can_manage_users(request.user):
+        managed_users = [
+            {
+                "user": user,
+                "role": get_user_role_label(user),
+            }
+            for user in User.objects.order_by("username")
+        ]
+        available_user_roles = _available_roles_for_user(request.user)
+
     return render(request, "home/settings.html", {
         "segment": "settings",
         "user_settings": user_settings,
+        "managed_users": managed_users,
+        "available_user_roles": available_user_roles,
     })
+
+
+@login_required
+def help_view(request):
+    return render(request, "home/help.html", {
+        "segment": "help",
+    })
+
+
+def _available_roles_for_user(user):
+    roles = [
+        ("operador", "Operador"),
+        ("jefe", "Jefe"),
+    ]
+
+    if is_system_admin(user):
+        roles.insert(0, ("admin", "Admin"))
+
+    return roles
 
 
 def get_json_body(request):
@@ -119,63 +231,85 @@ def settings_update_password(request):
 
 @login_required
 @require_POST
-def settings_update_appearance(request):
+def settings_create_user(request):
+    if not can_manage_users(request.user):
+        return JsonResponse({"success": False, "message": "Solo Admin o Jefe pueden crear usuarios."}, status=403)
+
     data = get_json_body(request)
-    user_settings, _ = UserSetting.objects.get_or_create(user=request.user)
-    valid_colors = {choice[0] for choice in UserSetting.COLOR_CHOICES}
+    username = data.get("username", "").strip()
+    first_name = data.get("first_name", "").strip()
+    last_name = data.get("last_name", "").strip()
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    role = data.get("role", "operador").strip().lower()
 
-    theme_color = data.get("theme_color", user_settings.theme_color)
-    if theme_color not in valid_colors:
-        return JsonResponse({"success": False, "message": "Color de tema no valido."}, status=400)
+    if role not in SYSTEM_ROLE_GROUPS:
+        return JsonResponse({"success": False, "message": "Selecciona un rol valido."}, status=400)
 
-    user_settings.theme_color = theme_color
-    user_settings.compact_layout = bool(data.get("compact_layout", False))
-    user_settings.dark_mode = bool(data.get("dark_mode", False))
-    user_settings.save(update_fields=["theme_color", "compact_layout", "dark_mode", "updated_at"])
+    if role == "admin" and not is_system_admin(request.user):
+        return JsonResponse({"success": False, "message": "Solo un Admin puede crear otro Admin."}, status=403)
 
-    return JsonResponse({"success": True, "message": "Apariencia actualizada correctamente."})
+    if not username:
+        return JsonResponse({"success": False, "message": "El usuario es obligatorio."}, status=400)
 
+    if User.objects.filter(username=username).exists():
+        return JsonResponse({"success": False, "message": "Este usuario ya existe."}, status=400)
 
-@login_required
-@require_POST
-def settings_update_notifications(request):
-    data = get_json_body(request)
-    user_settings, _ = UserSetting.objects.get_or_create(user=request.user)
-    user_settings.security_alerts = bool(data.get("security_alerts", False))
-    user_settings.email_alerts = bool(data.get("email_alerts", False))
-    user_settings.save(update_fields=["security_alerts", "email_alerts", "updated_at"])
+    if email:
+        try:
+            validate_email(email)
+        except ValidationError:
+            return JsonResponse({"success": False, "message": "Ingresa un correo valido."}, status=400)
 
-    return JsonResponse({"success": True, "message": "Notificaciones actualizadas correctamente."})
+        if User.objects.filter(email=email).exists():
+            return JsonResponse({"success": False, "message": "Este correo ya esta registrado."}, status=400)
 
+    if not password:
+        return JsonResponse({"success": False, "message": "La contrasena es obligatoria."}, status=400)
 
-@login_required
-@require_POST
-def settings_update_security(request):
-    data = get_json_body(request)
-    user_settings, _ = UserSetting.objects.get_or_create(user=request.user)
-    user_settings.extra_verification = bool(data.get("extra_verification", False))
-    user_settings.save(update_fields=["extra_verification", "updated_at"])
+    user = User(
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        is_active=True,
+    )
 
-    return JsonResponse({"success": True, "message": "Configuracion de seguridad actualizada correctamente."})
+    try:
+        validate_password(password, user)
+    except ValidationError as exc:
+        return JsonResponse({"success": False, "message": " ".join(exc.messages)}, status=400)
+
+    user.set_password(password)
+    user.save()
+    _assign_system_role(user, role)
+    UserSetting.objects.get_or_create(user=user)
+
+    return JsonResponse({
+        "success": True,
+        "message": f"Usuario creado correctamente con rol {get_user_role_label(user)}.",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.get_full_name(),
+            "email": user.email,
+            "role": get_user_role_label(user),
+        },
+    })
 
 class IndexView(LoginRequiredMixin, TemplateView):
     template_name = 'home/index.html'
     login_url = '/login/'
 
-def register_view(request):
-    if request.method == "POST":
-        form = UserCreationForm(request.POST)
+    def dispatch(self, request, *args, **kwargs):
+        if not is_admin_user(request.user):
+            from django.shortcuts import redirect
 
-        if form.is_valid():
-            form.save()
-            messages.success(request, "Usuario registrado correctamente.")
-            return redirect("login")
-    else:
-        form = UserCreationForm()
+            return redirect("dashboard")
 
-    return render(request, "accounts/register.html", {
-        "form": form
-    })
+        _activate_cameras_for_admin(request.user)
+
+        return super().dispatch(request, *args, **kwargs)
 
 
 class DashboardView(LoginRequiredMixin, TemplateView):
@@ -187,29 +321,75 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
         today = timezone.localdate()
         now = timezone.localtime()
+        events_qs = SecurityEvent.objects.all()
+        reports_qs = Informe.objects.all()
+        active_cameras = _activate_cameras_for_admin(self.request.user)
+        total_cameras = Camera.objects.count()
+        ai_model_status = _ai_model_status()
+
+        if not is_admin_user(self.request.user):
+            authorized_person = get_authorized_person_for_user(self.request.user)
+
+            if authorized_person is not None:
+                identity_filter = Q(authorized_person=authorized_person)
+
+                for value in (
+                    authorized_person.get_full_name(),
+                    authorized_person.nombres,
+                    authorized_person.apellidos,
+                    authorized_person.correo,
+                ):
+                    if value:
+                        identity_filter |= Q(details__icontains=value)
+
+                events_qs = events_qs.filter(identity_filter).exclude(authorized_person__isnull=True)
+                reports_qs = reports_qs.filter(persona_detectada__icontains=authorized_person.get_full_name())
+            else:
+                identity_filter = Q(related_user=self.request.user)
+
+                for value in (
+                    self.request.user.get_full_name(),
+                    self.request.user.first_name,
+                    self.request.user.last_name,
+                    self.request.user.username,
+                    self.request.user.email,
+                ):
+                    value = (value or "").strip()
+
+                    if value:
+                        identity_filter |= Q(details__icontains=value)
+
+                events_qs = events_qs.filter(identity_filter)
+                reports_qs = reports_qs.filter(persona_detectada__icontains=self.request.user.username)
 
         # =========================
         # Métricas principales
         # =========================
-        total_events_today = SecurityEvent.objects.filter(
+        total_events_today = events_qs.filter(
             timestamp__date=today
         ).count()
 
-        critical_alerts = SecurityEvent.objects.filter(
+        critical_alerts = events_qs.filter(
             resolved=False,
-            event_type__in=[
-                'dangerous_object',
-                'unauthorized_access',
-                'face_unknown'
-            ]
+            timestamp__date=today,
+            severity__in=['ALTO', 'CRITICO'],
         ).count()
 
-        informes_today = Informe.objects.filter(
+        unauthorized_accesses_today = events_qs.filter(
+            timestamp__date=today,
+            event_type__in=[
+                'unauthorized_access',
+                'intrusion',
+                'face_unknown',
+            ],
+        ).count()
+
+        informes_today = reports_qs.filter(
             fecha__date=today
         ).count()
 
-        total_reports = Informe.objects.count()
-        epp_ok_count = Informe.objects.filter(epp_correcto=True).count()
+        total_reports = reports_qs.count()
+        epp_ok_count = reports_qs.filter(epp_correcto=True).count()
         epp_incorrect_count = total_reports - epp_ok_count
 
         if total_reports > 0:
@@ -223,26 +403,26 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             is_active=True
         ).count()
 
-        pending_events = SecurityEvent.objects.filter(
+        pending_events = events_qs.filter(
             resolved=False
         ).count()
 
-        resolved_events = SecurityEvent.objects.filter(
+        resolved_events = events_qs.filter(
             resolved=True
         ).count()
 
-        total_events = SecurityEvent.objects.count()
+        total_events = events_qs.count()
 
         # =========================
         # Últimos registros
         # =========================
-        recent_events = SecurityEvent.objects.select_related(
+        recent_events = events_qs.select_related(
             'related_user'
         ).all()[:5]
 
-        recent_reports = Informe.objects.order_by('-fecha')[:5]
+        recent_reports = reports_qs.order_by('-fecha')[:5]
 
-        last_event = SecurityEvent.objects.first()
+        last_event = events_qs.first()
 
         # =========================
         # Eventos últimos 7 días
@@ -251,7 +431,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         days = [start_day + timedelta(days=i) for i in range(7)]
 
         raw_weekly = (
-            SecurityEvent.objects
+            events_qs
             .filter(timestamp__date__gte=start_day, timestamp__date__lte=today)
             .annotate(day=TruncDate('timestamp'))
             .values('day')
@@ -279,21 +459,50 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         event_type_display = dict(SecurityEvent.EVENT_TYPES)
 
         raw_distribution = (
-            SecurityEvent.objects
+            events_qs
             .values('event_type')
             .annotate(total=Count('id'))
-            .order_by('-total')
         )
 
+        distribution_totals = {
+            item['event_type']: item['total']
+            for item in raw_distribution
+        }
+        event_type_order = [
+            'dangerous_object',
+            'authorized_object',
+            'unauthorized_object',
+            'face_recognized',
+            'face_unknown',
+            'unauthorized_access',
+            'intrusion',
+            'ppe_missing',
+            'fall_detected',
+            'phone_usage',
+        ]
         event_breakdown = []
 
-        for item in raw_distribution:
-            event_type = item['event_type']
+        for event_type in event_type_order:
+            total = distribution_totals.get(event_type, 0)
 
+            if total:
+                event_breakdown.append({
+                    'key': event_type,
+                    'label': event_type_display.get(event_type, event_type),
+                    'total': total,
+                })
+
+        known_event_types = set(event_type_order)
+        remaining_event_types = sorted(
+            set(distribution_totals) - known_event_types,
+            key=lambda event_type: event_type_display.get(event_type, event_type),
+        )
+
+        for event_type in remaining_event_types:
             event_breakdown.append({
                 'key': event_type,
                 'label': event_type_display.get(event_type, event_type),
-                'total': item['total'],
+                'total': distribution_totals[event_type],
             })
 
         event_labels = [
@@ -320,6 +529,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'total_events': total_events,
             'total_events_today': total_events_today,
             'critical_alerts': critical_alerts,
+            'unauthorized_accesses_today': unauthorized_accesses_today,
             'informes_today': informes_today,
 
             'epp_percent': epp_percent,
@@ -341,6 +551,12 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'event_labels': event_labels,
             'event_values': event_values,
             'event_breakdown': event_breakdown,
+            'active_cameras': active_cameras,
+            'total_cameras': total_cameras,
+            'camera_status_label': 'En linea' if active_cameras else 'Sin camaras activas',
+            'camera_status_class': 'text-success' if active_cameras else 'text-danger',
+            'ai_model_status_label': ai_model_status["label"],
+            'ai_model_status_class': ai_model_status["class"],
         })
 
         return context

@@ -1,0 +1,28 @@
+[Unit]
+Description=SMRI Django web application
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User=smri
+Group=www-data
+WorkingDirectory=/opt/smri
+EnvironmentFile=/opt/smri/.env
+RuntimeDirectory=smri
+RuntimeDirectoryMode=0750
+ExecStart=/opt/smri/.venv/bin/gunicorn \
+    --workers 3 \
+    --timeout 60 \
+    --bind unix:/run/smri/gunicorn.sock \
+    config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,10 @@
 $(document).ready(function () {
+  // Inicializar tooltips de Bootstrap
+  const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.map(function (tooltipTriggerEl) {
+    return new bootstrap.Tooltip(tooltipTriggerEl);
+  });
+
   let lastVideoErrorAt = 0;
   let cameraStatusTimer = null;
 
@@ -8,7 +14,12 @@ $(document).ready(function () {
     urls: {
       events: $page.data('events-url'),
       registerFace: $page.data('register-face-url')
-    }
+    },
+    streamMode: String($page.data('stream-mode') || 'mjpeg'),
+    targetVideoFps: Number($page.data('target-video-fps')) || 8,
+    eventsRefreshMs: Number($page.data('events-refresh-ms')) || 5000,
+    liveLogRefreshMs: Number($page.data('live-log-refresh-ms')) || 800,
+    cameraStatusRefreshMs: Number($page.data('camera-status-refresh-ms')) || 3000
   };
 
   function escapeHtml(str) {
@@ -85,6 +96,10 @@ $(document).ready(function () {
   }
 
   function loadCameraStatus() {
+    // En cloud el video llega directamente desde MediaMTX. El worker de Django
+    // no abre la cámara y, por tanto, no debe usarse para determinar su estado.
+    if (APP_CONFIG.streamMode === 'mediamtx') return;
+
     const statusUrl = getSelectedCameraStatusUrl();
 
     if (!statusUrl) {
@@ -112,14 +127,28 @@ $(document).ready(function () {
     });
   }
 
-  function ensureVideoFeedExists() {
-    if ($('#videoFeed').length) return;
+  function ensureVideoFeedExists(streamKind) {
+    const expectedTag = streamKind === 'mediamtx' ? 'IFRAME' : 'IMG';
+    const currentFeed = document.getElementById('videoFeed');
+
+    if (currentFeed && currentFeed.tagName === expectedTag) return;
+    if (currentFeed) currentFeed.remove();
+
+    if (streamKind === 'mediamtx') {
+      $('#cameraScreen').prepend(`
+        <iframe
+          class="camera-feed"
+          id="videoFeed"
+          title="Video en vivo"
+          allow="autoplay; fullscreen; picture-in-picture"
+          referrerpolicy="same-origin"
+          allowfullscreen></iframe>
+      `);
+      return;
+    }
 
     $('#cameraScreen').prepend(`
-      <img
-        class="camera-feed"
-        id="videoFeed"
-        alt="Video en vivo">
+      <img class="camera-feed" id="videoFeed" alt="Video en vivo">
     `);
   }
 
@@ -152,6 +181,7 @@ $(document).ready(function () {
     }
 
     const videoUrl = $selectedOption.val();
+    const streamKind = String($selectedOption.data('stream-kind') || APP_CONFIG.streamMode);
     const label = $selectedOption.data('label');
     const isActive = String($selectedOption.data('active')) === 'true';
 
@@ -173,15 +203,35 @@ $(document).ready(function () {
       return;
     }
 
-    $('#noCameraBox').remove();
-    ensureVideoFeedExists();
+    if (!videoUrl || streamKind === 'unconfigured') {
+      showNoCameraBox('Configura MEDIAMTX_PUBLIC_URL en el servidor.');
+      setCameraStatus({
+        status: 'no_signal',
+        message: 'Falta configurar la URL pública de MediaMTX.'
+      });
+      return;
+    }
 
-    const finalUrl = videoUrl + '?fps=8&t=' + Date.now();
+    $('#noCameraBox').remove();
+    ensureVideoFeedExists(streamKind);
+
+    const finalUrl = streamKind === 'mediamtx'
+      ? videoUrl
+      : videoUrl + '?fps=' + APP_CONFIG.targetVideoFps + '&t=' + Date.now();
 
     lastVideoErrorAt = 0;
 
     $('#videoFeed')
+    .off('load')
     .off('error')
+    .on('load', function () {
+      if (streamKind === 'mediamtx') {
+        setCameraStatus({
+          status: 'active',
+          message: 'Reproductor WebRTC conectado a MediaMTX.'
+        });
+      }
+    })
     .on('error', function () {
         lastVideoErrorAt = Date.now();
 
@@ -198,7 +248,9 @@ $(document).ready(function () {
     message: 'Verificando señal de la cámara...'
     });
 
-    setTimeout(loadCameraStatus, 1500);
+    if (streamKind !== 'mediamtx') {
+      setTimeout(loadCameraStatus, 1500);
+    }
   }
 
   $('#cameraSelector').on('change', changeCamera);
@@ -218,6 +270,11 @@ $(document).ready(function () {
   });
 
   $('#snapshotBtn').on('click', function () {
+    if (APP_CONFIG.streamMode === 'mediamtx') {
+      alert('La captura desde el navegador no está disponible para el reproductor WebRTC.');
+      return;
+    }
+
     const img = document.getElementById('videoFeed');
 
     if (!img) {
@@ -266,6 +323,31 @@ $(document).ready(function () {
         `);
       }
     });
+  }
+
+  function formatEventDetails(details) {
+    const text = String(details || 'Sin detalles adicionales').trim();
+    const marker = /(Motivo|Descripci[oó]n|Categor[ií]a|Persona|Estado|Evento adicional|Confianza|Nivel)\s*:\s*/gi;
+    const normalized = text.replace(marker, '\n$1: ').trim();
+    const rows = normalized.split(/\n+/).map(line => line.trim()).filter(Boolean);
+
+    return rows.map(row => {
+      const separator = row.indexOf(':');
+
+      if (separator < 0) {
+        return `<div class="event-detail-row">${escapeHtml(row)}</div>`;
+      }
+
+      const label = row.slice(0, separator).trim();
+      const value = row.slice(separator + 1).trim();
+
+      return `
+        <div class="event-detail-row">
+          <strong>${escapeHtml(label)}:</strong>
+          <span>${escapeHtml(value || 'No especificado')}</span>
+        </div>
+      `;
+    }).join('');
   }
 
   function renderEvents(data) {
@@ -318,10 +400,10 @@ $(document).ready(function () {
               </div>
 
               <div class="event-content">
-                <strong>${escapeHtml(title)}</strong>
-                <small>${escapeHtml(event.timestamp || '')}</small>
-                <p>${escapeHtml(details)}</p>
-                <small><i class="fas fa-video"></i> ${escapeHtml(event.camera || 'Sin cámara')}</small>
+                <strong class="event-title">${escapeHtml(title)}</strong>
+                <small class="event-date"><strong>Fecha y hora:</strong> ${escapeHtml(event.timestamp || '')}</small>
+                <div class="event-details">${formatEventDetails(details)}</div>
+                <small class="event-camera"><i class="fas fa-video"></i> <strong>Cámara:</strong> ${escapeHtml(event.camera || 'Sin cámara')}</small>
               </div>
 
               <span class="event-priority">${escapeHtml(priority)}</span>
@@ -468,16 +550,36 @@ $(document).ready(function () {
     if (!box || !items || !items.length) return;
 
     items.forEach(it => {
-      const line = `[${it.ts}] ${it.msg}`;
-      box.innerHTML += escapeHtml(line) + '<br>';
+      const row = document.createElement('div');
+      const kind = ['danger', 'identity', 'success', 'info'].includes(it.kind)
+        ? it.kind
+        : 'info';
+      const textColors = {
+        danger: '#f87171',
+        identity: '#60a5fa',
+        success: '#4ade80',
+        info: '#cbd5e1'
+      };
+
+      row.className = `live-log-line live-log-line--${kind}`;
+      row.style.color = textColors[kind];
+
+      const time = document.createElement('span');
+      time.className = 'live-log-time';
+      time.textContent = `[${it.ts}]`;
+
+      const message = document.createElement('span');
+      message.className = 'live-log-message';
+      message.textContent = it.msg;
+
+      row.append(time, message);
+      box.appendChild(row);
     });
 
     box.scrollTop = box.scrollHeight;
 
-    const parts = box.innerHTML.split('<br>');
-
-    if (parts.length > 180) {
-      box.innerHTML = parts.slice(parts.length - 180).join('<br>');
+    while (box.children.length > 180) {
+      box.removeChild(box.firstElementChild);
     }
   }
 
@@ -515,14 +617,14 @@ $(document).ready(function () {
   setInterval(updateTimestamp, 1000);
 
   loadSecurityEvents();
-  setInterval(loadSecurityEvents, 5000);
+  setInterval(loadSecurityEvents, APP_CONFIG.eventsRefreshMs);
 
   loadLiveLog();
-  setInterval(loadLiveLog, 800);
+  setInterval(loadLiveLog, APP_CONFIG.liveLogRefreshMs);
 
   changeCamera();
   if (cameraStatusTimer) {
     clearInterval(cameraStatusTimer);
   }
-  cameraStatusTimer = setInterval(loadCameraStatus, 3000);
+  cameraStatusTimer = setInterval(loadCameraStatus, APP_CONFIG.cameraStatusRefreshMs);
 });

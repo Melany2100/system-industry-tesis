@@ -51,6 +51,7 @@ def save_security_event_with_evidence(
     event_type: str,
     details: str,
     related_user=None,
+    severity: str = "MEDIO",
     jpeg_quality: int = 85
 ) -> SecurityEvent:
     """
@@ -79,6 +80,7 @@ def save_security_event_with_evidence(
 
     event = SecurityEvent.objects.create(
         event_type=event_type,
+        severity=severity,
         details=details,
         image_path=saved_path,
         related_user=related_user,

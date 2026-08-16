@@ -21,12 +21,14 @@
 
       <ul class="custom-sidenav__menu">
 
+        {% if is_admin_user %}
         <li class="custom-sidenav__item">
           <a class="custom-sidenav__link {% if segment == 'home' %}active{% endif %}" href="/">
             <i class="bi bi-house-door"></i>
             <span>Home</span>
           </a>
         </li>
+        {% endif %}
 
         <li class="custom-sidenav__item">
           <a class="custom-sidenav__link {% if segment == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
@@ -77,7 +79,7 @@
         </li>
 
         <li class="custom-sidenav__item">
-          <a class="custom-sidenav__link" href="#">
+          <a class="custom-sidenav__link {% if segment == 'help' %}active{% endif %}" href="{% url 'help' %}">
             <i class="bi bi-question-circle"></i>
             <span>Ayuda</span>
           </a>
@@ -85,9 +87,7 @@
 
       </ul>
     </div>
-
-
-
+    <div class="custom-sidenav__card">
       <h4>Sistema activo</h4>
       <p>Monitoreo de riesgos industriales en tiempo real.</p>
 

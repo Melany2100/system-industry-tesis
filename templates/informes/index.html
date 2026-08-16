@@ -15,6 +15,60 @@
         Registro de incidentes y validación del uso de equipo de protección personal.
       </p>
     </div>
+
+    <!-- BOTÓN PARA GENERAR REPORTES -->
+    <div class="dropdown mt-3 mt-md-0">
+      <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownReportes" data-bs-toggle="dropdown"
+        aria-expanded="false">
+        Generar reporte
+      </button>
+
+      <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="dropdownReportes">
+
+        <li>
+          <h6 class="dropdown-header">Reporte semanal</h6>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'xlsx' %}">
+            Descargar Excel (.xlsx)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'pdf' %}">
+            Descargar PDF (.pdf)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'semanal' 'csv' %}">
+            Descargar CSV (.csv)
+          </a>
+        </li>
+
+        <li>
+          <hr class="dropdown-divider">
+        </li>
+
+        <li>
+          <h6 class="dropdown-header">Reporte mensual</h6>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'xlsx' %}">
+            Descargar Excel (.xlsx)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'pdf' %}">
+            Descargar PDF (.pdf)
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="{% url 'exportar_informes' 'mensual' 'csv' %}">
+            Descargar CSV (.csv)
+          </a>
+        </li>
+
+      </ul>
+    </div>
   </div>
 
   <div class="row mb-4">
@@ -22,7 +76,7 @@
       <div class="card shadow-sm border-0 h-100">
         <div class="card-body">
           <p class="text-sm text-muted mb-1">Total de informes</p>
-          <h4 class="fw-bold mb-0">{{ informes|length }}</h4>
+          <h4 class="fw-bold mb-0">{{ total_count }}</h4>
         </div>
       </div>
     </div>
@@ -48,109 +102,329 @@
     </div>
   </div>
 
+  <div class="row mb-4">
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por tipo</p>
+              <h5 class="fw-bold mb-0">Clasificación</h5>
+            </div>
+            <i class="fas fa-layer-group"></i>
+          </div>
+
+          <div class="summary-list">
+            {% for item in event_type_counts %}
+            <div class="summary-list-item">
+              <div class="summary-list-item__top">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.total }}</strong>
+              </div>
+              <div class="summary-bar">
+                <span style="width: {{ item.percent }}%;"></span>
+              </div>
+            </div>
+            {% empty %}
+            <p class="summary-empty mb-0">No hay eventos registrados.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por fecha</p>
+              <h5 class="fw-bold mb-0">
+                {% if selected_event_week %}Semana seleccionada{% else %}Últimos 7 días{% endif %}
+              </h5>
+              <small class="event-date-range">{{ event_date_range_label }}</small>
+            </div>
+            <div class="event-date-filter">
+              <button
+                type="button"
+                class="event-date-filter__toggle"
+                id="eventDateFilterToggle"
+                aria-label="Filtrar eventos por semana"
+                aria-expanded="false"
+                aria-controls="eventDateFilterPanel">
+                <i class="fas fa-calendar-alt"></i>
+              </button>
+
+              <form method="get" class="event-date-filter__panel" id="eventDateFilterPanel" hidden>
+                <strong>Buscar una semana</strong>
+                <label for="eventMonth">Mes</label>
+                <input type="month" id="eventMonth" name="event_month" value="{{ selected_event_month }}" required>
+
+                <label for="eventWeek">Semana del mes</label>
+                <select id="eventWeek" name="event_week" required>
+                  <option value="1" {% if selected_event_week == 1 %}selected{% endif %}>Días 1 al 7</option>
+                  <option value="2" {% if selected_event_week == 2 %}selected{% endif %}>Días 8 al 14</option>
+                  <option value="3" {% if selected_event_week == 3 %}selected{% endif %}>Días 15 al 21</option>
+                  <option value="4" {% if selected_event_week == 4 %}selected{% endif %}>Días 22 al 28</option>
+                  <option value="5" {% if selected_event_week == 5 %}selected{% endif %}>Desde el día 29</option>
+                </select>
+
+                <div class="event-date-filter__actions">
+                  <a href="{% url 'lista_informes' %}">Últimos 7 días</a>
+                  <button type="submit">Aplicar</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="summary-list">
+            {% for item in event_date_counts %}
+            <div class="summary-list-item">
+              <div class="summary-list-item__top">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.total }}</strong>
+              </div>
+              <div class="summary-bar">
+                <span style="width: {{ item.percent }}%;"></span>
+              </div>
+            </div>
+            {% empty %}
+            <p class="summary-empty mb-0">No hay eventos registrados.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4 mb-3">
+      <div class="card shadow-sm border-0 h-100 informe-summary-card">
+        <div class="card-body">
+          <div class="summary-card-header">
+            <div>
+              <p class="text-sm text-muted mb-1">Eventos por riesgo</p>
+              <h5 class="fw-bold mb-0">Nivel de alerta</h5>
+            </div>
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+
+          <div class="risk-summary-list">
+            {% for item in risk_level_counts %}
+            <div class="risk-summary-item">
+              <span class="risk-pill risk-pill--{{ item.key }}">{{ item.label }}</span>
+              <strong>{{ item.total }}</strong>
+              <small>{{ item.percent }}%</small>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row">
     {% for informe in informes %}
-      <div class="col-lg-6 col-xl-4 mb-4">
-        <div class="card shadow-sm border-0 h-100 informe-card">
+    <div class="col-lg-6 col-xl-4 mb-4">
+      <div class="card shadow-sm border-0 h-100 informe-card">
 
-          <div class="card-header bg-white border-0 pb-0">
-            <div class="d-flex justify-content-between align-items-start">
-              <div>
-                <h5 class="mb-1 fw-bold">Incidente registrado</h5>
-                <p class="text-sm text-muted mb-0">
-                  {{ informe.fecha|date:"d/m/Y" }} - {{ informe.fecha|time:"H:i:s" }}
-                </p>
-              </div>
-
-              {% if informe.epp_correcto %}
-                <span class="badge bg-success">EPP correcto</span>
-              {% else %}
-                <span class="badge bg-danger">Alerta</span>
-              {% endif %}
-            </div>
-          </div>
-
-          <div class="card-body">
-            <div class="mb-3">
-              <p class="mb-1"><strong>Cámara:</strong> {{ informe.camara }}</p>
-              <p class="mb-1"><strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}</p>
-              <p class="mb-2"><strong>Descripción:</strong></p>
-              <div class="descripcion-box">
-                {{ informe.descripcion }}
-              </div>
+        <div class="card-header bg-white border-0 pb-0">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <h5 class="mb-1 fw-bold">Incidente registrado</h5>
+              <p class="text-sm text-muted mb-0">
+                {{ informe.fecha|date:"d/m/Y" }} - {{ informe.fecha|time:"H:i:s" }}
+              </p>
             </div>
 
-            <div class="mini-evidencia text-center mb-3">
-              {% if informe.evidencia %}
-                <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded evidencia-preview">
-              {% else %}
-                <div class="sin-evidencia">
-                  Sin evidencia disponible
-                </div>
-              {% endif %}
-            </div>
-          </div>
-
-          <div class="card-footer bg-white border-0 d-flex justify-content-between align-items-center">
-            {% if not informe.epp_correcto %}
-              <span class="text-danger fw-semibold">Requiere revisión</span>
+            {% if informe.epp_correcto %}
+            <span class="badge bg-success">EPP correcto</span>
             {% else %}
-              <span class="text-success fw-semibold">Cumple normativa</span>
-            {% endif %}
-
-            {% if informe.evidencia %}
-              <button
-                class="btn btn-sm btn-primary"
-                data-bs-toggle="modal"
-                data-bs-target="#evidenciaModal{{ informe.id }}">
-                Ver evidencia
-              </button>
-            {% else %}
-              <button class="btn btn-sm btn-secondary" disabled>
-                Sin imagen
-              </button>
+            <span class="badge bg-danger">Alerta</span>
             {% endif %}
           </div>
         </div>
-      </div>
 
-      {% if informe.evidencia %}
-      <div class="modal fade" id="evidenciaModal{{ informe.id }}" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-          <div class="modal-content border-0 shadow">
-            <div class="modal-header">
-              <h5 class="modal-title fw-bold">Evidencia del incidente</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-            </div>
-
-            <div class="modal-body">
-              <div class="mb-3">
-                <p class="mb-1"><strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}</p>
-                <p class="mb-1"><strong>Cámara:</strong> {{ informe.camara }}</p>
-                <p class="mb-1"><strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}</p>
-                <p class="mb-0"><strong>Descripción:</strong> {{ informe.descripcion }}</p>
-              </div>
-
-              <div class="text-center">
-                <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded shadow-sm">
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-    {% empty %}
-      <div class="col-12">
-        <div class="card shadow-sm border-0">
-          <div class="card-body text-center py-5">
-            <h5 class="fw-bold mb-2">No hay informes registrados</h5>
-            <p class="text-muted mb-0">
-              Cuando el sistema detecte eventos, aparecerán aquí.
+        <div class="card-body">
+          <div class="mb-3">
+            <p class="mb-1">
+              <strong>Cámara:</strong> {{ informe.camara }}
             </p>
+
+            <p class="mb-1">
+              <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
+            </p>
+
+            <p class="mb-2">
+              <strong>Descripción:</strong>
+            </p>
+
+            <div class="descripcion-box">
+              {{ informe.descripcion|default:"Sin descripción registrada." }}
+            </div>
+          </div>
+
+          <div class="mini-evidencia text-center mb-3">
+            {% if informe.evidencia %}
+            <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded evidencia-preview">
+            {% else %}
+            <div class="sin-evidencia">
+              Sin evidencia disponible
+            </div>
+            {% endif %}
           </div>
         </div>
+
+        <div class="card-footer bg-white border-0 d-flex justify-content-between align-items-center">
+          {% if not informe.epp_correcto %}
+          <span class="text-danger fw-semibold">Requiere revisión</span>
+          {% else %}
+          <span class="text-success fw-semibold">Cumple normativa</span>
+          {% endif %}
+
+          {% if informe.evidencia %}
+          <button class="btn btn-sm btn-primary" data-bs-toggle="modal"
+            data-bs-target="#evidenciaModal{{ informe.id }}">
+            Ver evidencia
+          </button>
+          {% else %}
+          <button class="btn btn-sm btn-secondary" disabled>
+            Sin imagen
+          </button>
+          {% endif %}
+        </div>
       </div>
+    </div>
+
+    {% if informe.evidencia %}
+    <div class="modal fade" id="evidenciaModal{{ informe.id }}" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+
+          <div class="modal-header">
+            <h5 class="modal-title fw-bold">Evidencia del incidente</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar">
+            </button>
+          </div>
+
+          <div class="modal-body">
+            <div class="mb-3">
+              <p class="mb-1">
+                <strong>Fecha:</strong> {{ informe.fecha|date:"d/m/Y H:i:s" }}
+              </p>
+
+              <p class="mb-1">
+                <strong>Cámara:</strong> {{ informe.camara }}
+              </p>
+
+              <p class="mb-1">
+                <strong>Persona:</strong> {{ informe.persona_detectada|default:"No identificada" }}
+              </p>
+
+              <p class="mb-0">
+                <strong>Descripción:</strong> {{ informe.descripcion|default:"Sin descripción registrada." }}
+              </p>
+            </div>
+
+            <div class="text-center">
+              <img src="{{ informe.evidencia.url }}" alt="Evidencia" class="img-fluid rounded shadow-sm">
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% empty %}
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-body text-center py-5">
+          <h5 class="fw-bold mb-2">No hay informes registrados</h5>
+          <p class="text-muted mb-0">
+            Cuando el sistema detecte eventos, aparecerán aquí.
+          </p>
+        </div>
+      </div>
+    </div>
     {% endfor %}
   </div>
+
+  {% if page_obj.has_other_pages %}
+  <nav aria-label="Paginación de informes" class="informes-pagination mt-4">
+    <ul class="pagination justify-content-center flex-wrap">
+
+      {% if page_obj.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_obj.previous_page_number }}">Anterior</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled">
+        <span class="page-link">Anterior</span>
+      </li>
+      {% endif %}
+
+      {% for page_number in page_range %}
+      {% if page_number == page_obj.paginator.ELLIPSIS %}
+      <li class="page-item disabled">
+        <span class="page-link">{{ page_number }}</span>
+      </li>
+      {% elif page_number == page_obj.number %}
+      <li class="page-item active" aria-current="page">
+        <span class="page-link">{{ page_number }}</span>
+      </li>
+      {% else %}
+      <li class="page-item">
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_number }}">{{ page_number }}</a>
+      </li>
+      {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?{% if date_filter_query %}{{ date_filter_query }}&{% endif %}page={{ page_obj.next_page_number }}">Siguiente</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled">
+        <span class="page-link">Siguiente</span>
+      </li>
+      {% endif %}
+
+    </ul>
+    <p class="text-center text-muted text-sm mb-0">
+      Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+    </p>
+  </nav>
+  {% endif %}
+
 </div>
 {% endblock content %}
+
+{% block javascripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('eventDateFilterToggle');
+    const panel = document.getElementById('eventDateFilterPanel');
+
+    if (!toggle || !panel) return;
+
+    function closePanel() {
+      panel.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    toggle.addEventListener('click', function (event) {
+      event.stopPropagation();
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+
+    panel.addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+
+    document.addEventListener('click', closePanel);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closePanel();
+    });
+  });
+</script>
+{% endblock javascripts %}

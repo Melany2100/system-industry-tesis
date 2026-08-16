@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 
 from core_apps.camera.models import SecurityEvent
 from core_apps.informes.models import Informe
@@ -19,6 +19,8 @@ class Command(BaseCommand):
         n_events = options['events']
 
         user, created = User.objects.get_or_create(username=username)
+        admin_group, _ = Group.objects.get_or_create(name="Administrador")
+
         if created:
             user.set_password(password)
             user.is_staff = True
@@ -27,6 +29,8 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"Usuario creado: {username} / {password}"))
         else:
             self.stdout.write(self.style.WARNING(f"Usuario ya existe: {username}"))
+
+        user.groups.add(admin_group)
 
         # Crear eventos + informes
         tipos = ['face_recognized', 'face_unknown', 'dangerous_object', 'unauthorized_access']

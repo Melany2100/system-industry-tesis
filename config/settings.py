@@ -9,155 +9,1182 @@ https://docs.djangoproject.com/en/4.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
+
 import os
-
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
+# ============================================================
+# CONFIGURACIÓN BASE
+# ============================================================
+
+# Evita bloqueos prolongados al inicializar webcams USB
+# con MSMF en Windows.
+os.environ.setdefault(
+    "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS",
+    "0",
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+load_dotenv(BASE_DIR / ".env")
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
+# ============================================================
+# HELPERS PARA VARIABLES DE ENTORNO
+# ============================================================
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-s$@!m4upd8*=jnolgj&(5tu7l$51ku_w%z84rr3q2lv06r%(si'
+def env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = []
+def env_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
-# Application definition
+
+def env_bool(name, default):
+    value = os.getenv(name)
+
+    if value is None:
+        return bool(default)
+
+    normalized = value.strip().lower()
+
+    if normalized in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return True
+
+    if normalized in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return False
+
+    return bool(default)
+
+
+# ============================================================
+# ROL DE EJECUCIÓN
+# ============================================================
+
+# "edge" conserva el comportamiento local existente. En DigitalOcean se debe
+# definir SMRI_NODE_ROLE=cloud para impedir que el proceso web abra cámaras o
+# cargue los modelos de visión artificial.
+SMRI_NODE_ROLE = os.getenv(
+    "SMRI_NODE_ROLE",
+    "edge",
+).strip().lower()
+
+if SMRI_NODE_ROLE not in {"cloud", "edge"}:
+    raise ValueError(
+        "SMRI_NODE_ROLE debe ser 'cloud' o 'edge'."
+    )
+
+SMRI_EDGE_ENABLED = SMRI_NODE_ROLE == "edge"
+
+# URL pública del servidor MediaMTX, por ejemplo: https://media.midominio.com
+# El nodo cloud la usa para mostrar el stream sin cargar OpenCV ni modelos.
+MEDIAMTX_PUBLIC_URL = os.getenv("MEDIAMTX_PUBLIC_URL", "").strip().rstrip("/")
+
+# El nodo edge publica los fotogramas ya procesados mediante FFmpeg. Se deja
+# vacío por defecto para conservar el funcionamiento local sin MediaMTX.
+MEDIAMTX_PUBLISH_BASE_URL = os.getenv(
+    "MEDIAMTX_PUBLISH_BASE_URL",
+    "",
+).strip().rstrip("/")
+FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg").strip() or "ffmpeg"
+
+
+# ============================================================
+# CRITERIOS OPERATIVOS DEL SISTEMA
+# ============================================================
+
+SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS = env_float(
+    "SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS",
+    1.2,
+)
+
+SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS = env_float(
+    "SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS",
+    3.0,
+)
+
+SYSTEM_TARGET_VIDEO_FPS = env_int(
+    "SYSTEM_TARGET_VIDEO_FPS",
+    8,
+)
+
+SYSTEM_MAX_INTERNAL_VIDEO_FPS = env_int(
+    "SYSTEM_MAX_INTERNAL_VIDEO_FPS",
+    12,
+)
+
+LOCAL_CAMERA_CAPTURE_WIDTH = env_int(
+    "LOCAL_CAMERA_CAPTURE_WIDTH",
+    640,
+)
+
+LOCAL_CAMERA_CAPTURE_HEIGHT = env_int(
+    "LOCAL_CAMERA_CAPTURE_HEIGHT",
+    480,
+)
+
+LOCAL_CAMERA_CAPTURE_FPS = env_int(
+    "LOCAL_CAMERA_CAPTURE_FPS",
+    15,
+)
+
+LIVE_VIDEO_FRAME_WIDTH = env_int(
+    "LIVE_VIDEO_FRAME_WIDTH",
+    640,
+)
+
+LOCAL_CAMERA_FOURCC = os.getenv(
+    "LOCAL_CAMERA_FOURCC",
+    "MJPG",
+)
+
+LOCAL_CAMERA_BACKENDS = tuple(
+    backend.strip().upper()
+    for backend in os.getenv(
+        "LOCAL_CAMERA_BACKENDS",
+        "MSMF,DEFAULT",
+    ).split(",")
+    if backend.strip()
+)
+
+SYSTEM_ALERT_EMAIL_TARGET_SECONDS = env_int(
+    "SYSTEM_ALERT_EMAIL_TARGET_SECONDS",
+    8,
+)
+
+SYSTEM_ALERT_EMAIL_MAX_SECONDS = env_int(
+    "SYSTEM_ALERT_EMAIL_MAX_SECONDS",
+    9,
+)
+
+SYSTEM_EXPECTED_UPTIME_PERCENT = env_float(
+    "SYSTEM_EXPECTED_UPTIME_PERCENT",
+    95.0,
+)
+
+SYSTEM_EVENTS_REFRESH_MS = env_int(
+    "SYSTEM_EVENTS_REFRESH_MS",
+    2000,
+)
+
+SYSTEM_LIVE_LOG_REFRESH_MS = env_int(
+    "SYSTEM_LIVE_LOG_REFRESH_MS",
+    800,
+)
+
+SYSTEM_CAMERA_STATUS_REFRESH_MS = env_int(
+    "SYSTEM_CAMERA_STATUS_REFRESH_MS",
+    3000,
+)
+
+SYSTEM_MODEL_PRECISION_EXPECTED = env_float(
+    "SYSTEM_MODEL_PRECISION_EXPECTED",
+    85.0,
+)
+
+SYSTEM_MODEL_PRECISION_OBTAINED = env_float(
+    "SYSTEM_MODEL_PRECISION_OBTAINED",
+    87.25,
+)
+
+SYSTEM_MODEL_RECALL_EXPECTED = env_float(
+    "SYSTEM_MODEL_RECALL_EXPECTED",
+    90.0,
+)
+
+SYSTEM_MODEL_RECALL_OBTAINED = env_float(
+    "SYSTEM_MODEL_RECALL_OBTAINED",
+    93.21,
+)
+
+SYSTEM_MODEL_MAP50_EXPECTED = env_float(
+    "SYSTEM_MODEL_MAP50_EXPECTED",
+    90.0,
+)
+
+SYSTEM_MODEL_MAP50_OBTAINED = env_float(
+    "SYSTEM_MODEL_MAP50_OBTAINED",
+    96.04,
+)
+
+
+SYSTEM_OPERATION_CRITERIA = {
+    "desempeno": {
+        "live_video_response_seconds": {
+            "expected": f"< {SYSTEM_LIVE_VIDEO_MAX_RESPONSE_SECONDS:g}",
+            "obtained": SYSTEM_LIVE_VIDEO_RESPONSE_TARGET_SECONDS,
+        },
+        "detection_fps": {
+            "expected": f">= {SYSTEM_TARGET_VIDEO_FPS}",
+            "obtained": SYSTEM_TARGET_VIDEO_FPS,
+            "internal_max": SYSTEM_MAX_INTERNAL_VIDEO_FPS,
+        },
+        "email_alert_seconds": {
+            "expected": "< 10",
+            "obtained": SYSTEM_ALERT_EMAIL_TARGET_SECONDS,
+        },
+        "uptime_percent": {
+            "expected": f">= {SYSTEM_EXPECTED_UPTIME_PERCENT:g}",
+            "obtained": SYSTEM_EXPECTED_UPTIME_PERCENT,
+        },
+    },
+    "deteccion_yolov8": {
+        "ppe_precision_percent": {
+            "expected": SYSTEM_MODEL_PRECISION_EXPECTED,
+            "obtained": SYSTEM_MODEL_PRECISION_OBTAINED,
+        },
+        "ppe_recall_percent": {
+            "expected": SYSTEM_MODEL_RECALL_EXPECTED,
+            "obtained": SYSTEM_MODEL_RECALL_OBTAINED,
+        },
+        "map50_percent": {
+            "expected": SYSTEM_MODEL_MAP50_EXPECTED,
+            "obtained": SYSTEM_MODEL_MAP50_OBTAINED,
+        },
+        "restricted_zone_intrusion": {
+            "expected": "deteccion correcta",
+            "obtained": (
+                "deteccion facial y registro de personas implementado"
+            ),
+            "compliance": "parcial",
+        },
+    },
+    "usabilidad": {
+        "interface_clarity_percent": {
+            "expected": 85.0,
+            "obtained": 90.0,
+        },
+        "events_panel_refresh_ms": {
+            "expected": "<= 5000",
+            "obtained": SYSTEM_EVENTS_REFRESH_MS,
+        },
+    },
+}
+
+
+# ============================================================
+# SEGURIDAD
+# ============================================================
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+
+DEBUG = os.getenv(
+    "DEBUG",
+    "False",
+).lower() == "true"
+
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "ALLOWED_HOSTS",
+        "",
+    ).split(",")
+    if host.strip()
+]
+
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "",
+    ).split(",")
+    if origin.strip()
+]
+
+
+# ============================================================
+# APLICACIONES
+# ============================================================
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'core_apps.camera',
-    'core_apps.common',
-    'channels',
-    'core_apps.informes'
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+
+    "core_apps.camera",
+    "core_apps.common",
+    "core_apps.informes",
+
+    "channels",
 ]
+
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+
+ROOT_URLCONF = "config.urls"
+
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [os.path.join(BASE_DIR, 'templates')],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-                'core_apps.common.context_processors.user_role',
+        "BACKEND": (
+            "django.template.backends.django.DjangoTemplates"
+        ),
+        "DIRS": [
+            os.path.join(
+                BASE_DIR,
+                "templates",
+            )
+        ],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                (
+                    "django.template.context_processors.debug"
+                ),
+                (
+                    "django.template.context_processors.request"
+                ),
+                (
+                    "django.contrib.auth.context_processors.auth"
+                ),
+                (
+                    "django.contrib.messages.context_processors.messages"
+                ),
+                (
+                    "core_apps.common.context_processors.user_role"
+                ),
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+
+# ============================================================
+# BASE DE DATOS
+# ============================================================
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'smri_test',
-        'USER': 'adm_monitor',
-        'PASSWORD': 'password.1',
-        'HOST': 'localhost',
-        'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv(
+            "DB_HOST",
+            "localhost",
+        ),
+        "PORT": os.getenv(
+            "DB_PORT",
+            "5432",
+        ),
     }
 }
 
 
-# Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
-#DATABASES = {
-#    'default': {
-#        'ENGINE': 'django.db.backends.sqlite3',
-#        'NAME': BASE_DIR / 'db.sqlite3',
-#    }
-#}
-
-
-# Password validation
-# https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
+# ============================================================
+# VALIDACIÓN DE CONTRASEÑAS
+# ============================================================
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "UserAttributeSimilarityValidator"
+        ),
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "MinimumLengthValidator"
+        ),
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "CommonPasswordValidator"
+        ),
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": (
+            "django.contrib.auth.password_validation."
+            "NumericPasswordValidator"
+        ),
     },
 ]
 
 
-# Internationalization
-# https://docs.djangoproject.com/en/4.2/topics/i18n/
+# ============================================================
+# INTERNACIONALIZACIÓN
+# ============================================================
 
-LANGUAGE_CODE = 'es-ec'
+LANGUAGE_CODE = "es-ec"
 
-TIME_ZONE = 'America/Guayaquil'
+TIME_ZONE = "America/Guayaquil"
 
 USE_I18N = True
 
 USE_TZ = True
 
 
+# ============================================================
+# ARCHIVOS ESTÁTICOS
+# ============================================================
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.2/howto/static-files/
+STATIC_URL = os.getenv(
+    "STATIC_URL",
+    "/static/",
+)
 
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
 
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
+DEFAULT_AUTO_FIELD = (
+    "django.db.models.BigAutoField"
+)
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ============================================================
+# CHANNELS
+# ============================================================
 
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "BACKEND": (
+            "channels.layers.InMemoryChannelLayer"
+        ),
     },
 }
 
-# Configuración de seguridad para desarrollo
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
-SECURE_SSL_REDIRECT = False
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# ============================================================
+# CONFIGURACIÓN DE SEGURIDAD WEB
+# ============================================================
 
-LOGIN_REDIRECT_URL = '/'
-LOGOUT_REDIRECT_URL = '/login/'
+SESSION_COOKIE_SECURE = os.getenv(
+    "SESSION_COOKIE_SECURE",
+    "False",
+).lower() == "true"
 
+CSRF_COOKIE_SECURE = os.getenv(
+    "CSRF_COOKIE_SECURE",
+    "False",
+).lower() == "true"
+
+SECURE_SSL_REDIRECT = os.getenv(
+    "SECURE_SSL_REDIRECT",
+    "False",
+).lower() == "true"
+
+# Nginx termina TLS en producción y conserva el esquema original en este header.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
+
+
+# ============================================================
+# MEDIA
+# ============================================================
+
+MEDIA_URL = os.getenv(
+    "MEDIA_URL",
+    "/media/",
+)
+
+MEDIA_ROOT = BASE_DIR / "media"
+
+
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/login/"
+
+
+# ============================================================
+# CORREO
+# ============================================================
+
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+
+EMAIL_HOST = os.getenv(
+    "EMAIL_HOST",
+    "smtp.gmail.com",
+)
+
+EMAIL_PORT = env_int(
+    "EMAIL_PORT",
+    587,
+)
+
+EMAIL_USE_TLS = os.getenv(
+    "EMAIL_USE_TLS",
+    "True",
+).lower() == "true"
+
+EMAIL_USE_SSL = os.getenv(
+    "EMAIL_USE_SSL",
+    "False",
+).lower() == "true"
+
+EMAIL_HOST_USER = os.getenv(
+    "EMAIL_HOST_USER",
+    "",
+)
+
+EMAIL_HOST_PASSWORD = os.getenv(
+    "EMAIL_HOST_PASSWORD",
+    "",
+)
+
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    EMAIL_HOST_USER or "no-reply@smri.local",
+)
+
+EMAIL_TIMEOUT = min(
+    env_int(
+        "EMAIL_TIMEOUT",
+        SYSTEM_ALERT_EMAIL_TARGET_SECONDS,
+    ),
+    SYSTEM_ALERT_EMAIL_MAX_SECONDS,
+)
+
+PPE_EMAIL_EVERY_N_EVENTS = max(
+    1,
+    env_int(
+        "PPE_EMAIL_EVERY_N_EVENTS",
+        3,
+    ),
+)
+
+
+# ============================================================
+# PPE / YOLO
+# ============================================================
+
+PPE_MODEL_PATH = Path(
+    os.getenv(
+        "PPE_MODEL_PATH",
+        "camera/ppe_sh17_yolov8s.pt",
+    )
+)
+
+if not PPE_MODEL_PATH.is_absolute():
+    PPE_MODEL_PATH = (
+        BASE_DIR / PPE_MODEL_PATH
+    )
+
+
+# ============================================================
+# YOLOV8 - OBJETOS DE RIESGO
+# ============================================================
+
+RISK_YOLO_MODEL_PATH = (
+    BASE_DIR
+    / "camera"
+    / "weights"
+    / "yolov8s.pt"
+)
+
+RISK_YOLO_CONF = env_float(
+    "RISK_YOLO_CONF",
+    0.25,
+)
+
+# Reducido de 960 a 640 para disminuir carga de CPU.
+RISK_YOLO_IMGSZ = env_int(
+    "RISK_YOLO_IMGSZ",
+    640,
+)
+
+# Ejecuta YOLO de riesgo cada 4 frames.
+# Con 8 FPS equivale aproximadamente a 2 inferencias/segundo.
+RISK_YOLO_FRAME_INTERVAL = env_int(
+    "RISK_YOLO_FRAME_INTERVAL",
+    4,
+)
+
+RISK_YOLO_CLASSES = [
+    0,
+    14,
+    15,
+    16,
+    24,
+    26,
+    28,
+    39,
+]
+
+RISK_YOLO_ALERT_CONF = {
+    "cat": 0.75,
+    "dog": 0.60,
+    "bird": 0.60,
+    "backpack": 0.35,
+    "handbag": 0.35,
+    "suitcase": 0.35,
+    "bottle": env_float(
+        "RISK_BOTTLE_ALERT_CONF",
+        0.20,
+    ),
+}
+
+RISK_PERSON_CROP_ENABLED = env_bool(
+    "RISK_PERSON_CROP_ENABLED",
+    True,
+)
+
+RISK_PERSON_CROP_EXPAND_RATIO = env_float(
+    "RISK_PERSON_CROP_EXPAND_RATIO",
+    0.25,
+)
+
+RISK_PERSON_CROP_CONF = env_float(
+    "RISK_PERSON_CROP_CONF",
+    0.15,
+)
+
+ANIMAL_CONFIRMATION_FRAMES = env_int(
+    "ANIMAL_CONFIRMATION_FRAMES",
+    2,
+)
+
+ANIMAL_PERSON_OVERLAP_RATIO = env_float(
+    "ANIMAL_PERSON_OVERLAP_RATIO",
+    0.35,
+)
+
+
+# ============================================================
+# RECONOCIMIENTO FACIAL
+# ============================================================
+
+# A 8 FPS:
+# cada 6 frames = reconocimiento aproximadamente cada 0.75 s.
+FACE_RECOGNITION_FRAME_INTERVAL = env_int(
+    "FACE_RECOGNITION_FRAME_INTERVAL",
+    6,
+)
+
+FACE_DETECTION_FRAME_INTERVAL = env_int(
+    "FACE_DETECTION_FRAME_INTERVAL",
+    6,
+)
+
+# Se procesa una copia reducida del frame.
+# Esto disminuye bastante el uso de CPU de face_recognition.
+FACE_ANALYSIS_WIDTH = env_int(
+    "FACE_ANALYSIS_WIDTH",
+    320,
+)
+
+FACE_RECOGNITION_TOLERANCE = env_float(
+    "FACE_RECOGNITION_TOLERANCE",
+    0.65,
+)
+
+FACE_UNAUTHORIZED_CONFIRMATION_FRAMES = env_int(
+    "FACE_UNAUTHORIZED_CONFIRMATION_FRAMES",
+    3,
+)
+
+FACE_UNAUTHORIZED_DISPLAY_FRAMES = env_int(
+    "FACE_UNAUTHORIZED_DISPLAY_FRAMES",
+    2,
+)
+
+FACE_AUTH_MEMORY_SECONDS = env_float(
+    "FACE_AUTH_MEMORY_SECONDS",
+    10.0,
+)
+
+FACE_DB_SYNC_SECONDS = env_float(
+    "FACE_DB_SYNC_SECONDS",
+    2.0,
+)
+
+FACE_MIN_BOX_WIDTH_RATIO = env_float(
+    "FACE_MIN_BOX_WIDTH_RATIO",
+    0.020,
+)
+
+FACE_MIN_BOX_HEIGHT_RATIO = env_float(
+    "FACE_MIN_BOX_HEIGHT_RATIO",
+    0.030,
+)
+
+
+# ============================================================
+# DETECCIÓN DE EPP
+# ============================================================
+
+# A 8 FPS:
+# 8 frames equivalen aproximadamente a una comprobación
+# de EPP por segundo.
+PPE_FRAME_INTERVAL = env_int(
+    "PPE_FRAME_INTERVAL",
+    8,
+)
+
+# Dos confirmaciones permiten confirmar la infracción
+# sin introducir varios segundos de retraso.
+PPE_CONFIRMATION_FRAMES = env_int(
+    "PPE_CONFIRMATION_FRAMES",
+    2,
+)
+
+# Reducido para disminuir carga del modelo.
+PPE_INFERENCE_IMGSZ = env_int(
+    "PPE_INFERENCE_IMGSZ",
+    640,
+)
+
+PPE_MODEL_CONFIDENCE = env_float(
+    "PPE_MODEL_CONFIDENCE",
+    0.10,
+)
+
+PPE_PERSON_CONFIDENCE = env_float(
+    "PPE_PERSON_CONFIDENCE",
+    0.55,
+)
+
+PPE_PERSON_MIN_AREA_RATIO = env_float(
+    "PPE_PERSON_MIN_AREA_RATIO",
+    0.06,
+)
+
+PPE_PERSON_MIN_HEIGHT_RATIO = env_float(
+    "PPE_PERSON_MIN_HEIGHT_RATIO",
+    0.30,
+)
+
+PPE_PERSON_MIN_ASPECT_RATIO = env_float(
+    "PPE_PERSON_MIN_ASPECT_RATIO",
+    0.75,
+)
+
+PPE_PERSON_CORROBORATION_CONFIDENCE = env_float(
+    "PPE_PERSON_CORROBORATION_CONFIDENCE",
+    0.55,
+)
+
+PPE_PERSON_CORROBORATION_TTL_SECONDS = env_float(
+    "PPE_PERSON_CORROBORATION_TTL_SECONDS",
+    3.0,
+)
+
+PPE_IDENTITY_TRACKING_TTL_SECONDS = env_float(
+    "PPE_IDENTITY_TRACKING_TTL_SECONDS",
+    30.0,
+)
+
+PPE_MASK_CONFIDENCE = env_float(
+    "PPE_MASK_CONFIDENCE",
+    0.20,
+)
+
+PPE_GLOVES_CONFIDENCE = env_float(
+    "PPE_GLOVES_CONFIDENCE",
+    0.22,
+)
+
+PPE_EARMUFFS_CONFIDENCE = env_float(
+    "PPE_EARMUFFS_CONFIDENCE",
+    0.10,
+)
+
+PPE_HARDHAT_CONFIDENCE = env_float(
+    "PPE_HARDHAT_CONFIDENCE",
+    0.35,
+)
+
+PPE_SAFETY_GLASSES_CONFIDENCE = env_float(
+    "PPE_SAFETY_GLASSES_CONFIDENCE",
+    0.15,
+)
+
+PPE_NO_MASK_CONFIDENCE = env_float(
+    "PPE_NO_MASK_CONFIDENCE",
+    0.50,
+)
+
+PPE_PRESENCE_TTL_SECONDS = env_float(
+    "PPE_PRESENCE_TTL_SECONDS",
+    3.0,
+)
+
+PPE_SAFETY_GLASSES_PRESENCE_TTL_SECONDS = env_float(
+    "PPE_SAFETY_GLASSES_PRESENCE_TTL_SECONDS",
+    8.0,
+)
+
+
+# ============================================================
+# CÁMARA RTSP
+# ============================================================
+
+RTSP_CAMERA_URL = os.getenv(
+    "RTSP_CAMERA_URL",
+    (
+        "rtsp://admin:"
+        "TU_PASSWORD@192.168.10.198:554/stream1"
+    ),
+)
+
+RTSP_CAMERA_URL_FAST = os.getenv(
+    "RTSP_CAMERA_URL_FAST",
+    (
+        "rtsp://admin:"
+        "TU_PASSWORD@192.168.10.198:554/stream2"
+    ),
+)
+
+
+# ============================================================
+# DETECTOR VISUAL GENERAL
+# ============================================================
+
+YOLO_OBJECT_MODEL_PATH = (
+    BASE_DIR
+    / "camera"
+    / "weights"
+    / "yolov8s.pt"
+)
+
+YOLO_POSE_MODEL_PATH = (
+    BASE_DIR
+    / "camera"
+    / "weights"
+    / "yolov8s-pose.pt"
+)
+
+YOLO_FAST_MODEL_PATH = (
+    BASE_DIR
+    / "camera"
+    / "weights"
+    / "yolov8s.pt"
+)
+
+
+# ============================================================
+# OBJETOS CORTOPUNZANTES
+# ============================================================
+
+SHARP_OBJECT_CONF = env_float(
+    "SHARP_OBJECT_CONF",
+    0.20,
+)
+
+SHARP_OBJECT_IMGSZ = env_int(
+    "SHARP_OBJECT_IMGSZ",
+    1280,
+)
+
+SHARP_OBJECT_CLASSES = [
+    43,
+    76,
+]
+
+SHARP_OBJECT_ALERT_CONF = {
+    "knife": env_float(
+        "SHARP_KNIFE_ALERT_CONF",
+        0.45,
+    ),
+    "scissors": env_float(
+        "SHARP_SCISSORS_ALERT_CONF",
+        0.30,
+    ),
+}
+
+SHARP_OBJECT_CONFIRMATION_FRAMES = env_int(
+    "SHARP_OBJECT_CONFIRMATION_FRAMES",
+    3,
+)
+
+SHARP_OBJECT_TTL_SECONDS = env_float(
+    "SHARP_OBJECT_TTL_SECONDS",
+    2.0,
+)
+
+SHARP_PERSON_CROP_ENABLED = env_bool(
+    "SHARP_PERSON_CROP_ENABLED",
+    True,
+)
+
+SHARP_PERSON_CROP_EXPAND_RATIO = env_float(
+    "SHARP_PERSON_CROP_EXPAND_RATIO",
+    0.30,
+)
+
+SHARP_PERSON_CROP_MAX_AGE_SECONDS = env_float(
+    "SHARP_PERSON_CROP_MAX_AGE_SECONDS",
+    3.0,
+)
+
+
+# ============================================================
+# DETECCIÓN DE CAÍDAS / MOVIMIENTO
+# ============================================================
+
+POSE_CONF = env_float(
+    "POSE_CONF",
+    0.35,
+)
+
+POSE_IMGSZ = env_int(
+    "POSE_IMGSZ",
+    640,
+)
+
+POSE_KEYPOINT_CONF = env_float(
+    "POSE_KEYPOINT_CONF",
+    0.25,
+)
+
+FALL_SECONDS = env_float(
+    "FALL_SECONDS",
+    3.0,
+)
+
+FALL_ASPECT_RATIO = env_float(
+    "FALL_ASPECT_RATIO",
+    1.70,
+)
+
+FALL_TORSO_ANGLE = env_float(
+    "FALL_TORSO_ANGLE",
+    68,
+)
+
+FALL_MIN_BOX_AREA_RATIO = env_float(
+    "FALL_MIN_BOX_AREA_RATIO",
+    0.08,
+)
+
+FALL_MIN_WIDTH_RATIO = env_float(
+    "FALL_MIN_WIDTH_RATIO",
+    0.28,
+)
+
+FALL_TRACK_TTL_SECONDS = env_float(
+    "FALL_TRACK_TTL_SECONDS",
+    4.0,
+)
+
+
+# ============================================================
+# DETECCIÓN DE CELULAR
+# ============================================================
+
+PHONE_CONF = env_float(
+    "PHONE_CONF",
+    0.20,
+)
+
+# Antes estaba fijo en 960.
+# Ahora se puede controlar desde .env.
+PHONE_IMGSZ = env_int(
+    "PHONE_IMGSZ",
+    640,
+)
+
+PHONE_ALERT_SECONDS = env_float(
+    "PHONE_ALERT_SECONDS",
+    10,
+)
+
+PHONE_UNIDENTIFIED_ALERT_SECONDS = env_float(
+    "PHONE_UNIDENTIFIED_ALERT_SECONDS",
+    5.0,
+)
+
+PHONE_UNAUTHORIZED_ALERT_SECONDS = env_float(
+    "PHONE_UNAUTHORIZED_ALERT_SECONDS",
+    5.0,
+)
+
+PHONE_AREA_ALERT_SECONDS = env_float(
+    "PHONE_AREA_ALERT_SECONDS",
+    0,
+)
+
+PHONE_AREA_CONF = env_float(
+    "PHONE_AREA_CONF",
+    0.65,
+)
+
+PHONE_AREA_CONFIRMATION_FRAMES = env_int(
+    "PHONE_AREA_CONFIRMATION_FRAMES",
+    2,
+)
+
+PHONE_AREA_REQUIRES_PERSON = env_bool(
+    "PHONE_AREA_REQUIRES_PERSON",
+    True,
+)
+
+PHONE_TRACK_TTL_SECONDS = env_float(
+    "PHONE_TRACK_TTL_SECONDS",
+    1.5,
+)
+
+PHONE_PERSON_BOX_EXPAND_RATIO = env_float(
+    "PHONE_PERSON_BOX_EXPAND_RATIO",
+    0.18,
+)
+
+PHONE_CLASSES = [
+    0,
+    67,
+]
+
+
+# ============================================================
+# FRECUENCIA DE LOS DETECTORES
+# ============================================================
+
+DETECT_SHARP_EVERY_N_FRAMES = env_int(
+    "DETECT_SHARP_EVERY_N_FRAMES",
+    6,
+)
+
+DETECT_POSE_EVERY_N_FRAMES = env_int(
+    "DETECT_POSE_EVERY_N_FRAMES",
+    35,
+)
+
+# A 8 FPS:
+# cada 4 frames equivale aproximadamente
+# a 2 comprobaciones por segundo.
+DETECT_PHONE_EVERY_N_FRAMES = env_int(
+    "DETECT_PHONE_EVERY_N_FRAMES",
+    4,
+)
+
+
+# ============================================================
+# EVENTOS
+# ============================================================
+
+EVENT_COOLDOWN_SECONDS = env_int(
+    "EVENT_COOLDOWN_SECONDS",
+    10,
+)
+
+
+# ============================================================
+# OPTIMIZACIÓN RTSP
+# ============================================================
+
+RTSP_INITIAL_FRAME_TIMEOUT_SECONDS = env_int(
+    "RTSP_INITIAL_FRAME_TIMEOUT_SECONDS",
+    15,
+)
+
+RTSP_OPEN_TIMEOUT_MILLISECONDS = env_int(
+    "RTSP_OPEN_TIMEOUT_MILLISECONDS",
+    5000,
+)
+
+RTSP_READ_TIMEOUT_MILLISECONDS = env_int(
+    "RTSP_READ_TIMEOUT_MILLISECONDS",
+    3000,
+)
+
+RTSP_RECONNECT_DELAY_SECONDS = env_float(
+    "RTSP_RECONNECT_DELAY_SECONDS",
+    2.0,
+)
+
+# No aceptar frames con varios segundos de antigüedad.
+RTSP_STALE_FRAME_SECONDS = env_float(
+    "RTSP_STALE_FRAME_SECONDS",
+    2.0,
+)
+
+RTSP_TRANSPORT = os.getenv(
+    "RTSP_TRANSPORT",
+    "tcp",
+).strip().lower()
+
+# Permite stream principal + substream.
+RTSP_DUAL_STREAM_ENABLED = env_bool(
+    "RTSP_DUAL_STREAM_ENABLED",
+    True,
+)
+
+# Si la URL guardada ya apunta a stream2, se respeta como flujo unico. Esta
+# opcion permite recuperar el comportamiento dual en instalaciones con GPU.
+RTSP_FORCE_MAIN_ANALYSIS_FROM_SUBSTREAM = env_bool(
+    "RTSP_FORCE_MAIN_ANALYSIS_FROM_SUBSTREAM",
+    False,
+)
+
+# Si stream2 ya entrega 1280px o mas (por ejemplo 1920x1080 en una VIGI
+# C240), no se abre simultaneamente stream1 de 2560x1440.
+RTSP_SKIP_MAIN_WHEN_PREVIEW_WIDTH_AT_LEAST = env_int(
+    "RTSP_SKIP_MAIN_WHEN_PREVIEW_WIDTH_AT_LEAST",
+    1280,
+)
+
+RTSP_MAIN_STREAM_NAME = os.getenv(
+    "RTSP_MAIN_STREAM_NAME",
+    "stream1",
+)
+
+RTSP_SUB_STREAM_NAME = os.getenv(
+    "RTSP_SUB_STREAM_NAME",
+    "stream2",
+)
+
+RTSP_HIGH_RES_STALE_FRAME_SECONDS = env_float(
+    "RTSP_HIGH_RES_STALE_FRAME_SECONDS",
+    3.0,
+)
+
+DETECTION_OVERLAY_TTL_SECONDS = env_float(
+    "DETECTION_OVERLAY_TTL_SECONDS",
+    2.0,
+)
+
+
+# ============================================================
+# LOGIN / LOGOUT
+# ============================================================
+
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/login/"

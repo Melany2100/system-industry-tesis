@@ -1,0 +1,21 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "C:\\Users\\HP\\Documents\\TITULACION\\proyecto\\v2\\datasets",
+  "weights_dir": "C:\\Users\\HP\\Documents\\TITULACION\\proyecto\\v2\\system-industry-tesis\\weights",
+  "runs_dir": "C:\\Users\\HP\\Documents\\TITULACION\\proyecto\\v2\\system-industry-tesis\\runs",
+  "uuid": "43d1e98bae400f7294b7ed9047ed9ff8a969d769db510d2043201c20bccd5ee3",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

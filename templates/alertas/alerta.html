@@ -33,17 +33,17 @@
 
     <div class="alerts-summary">
       <div class="alert-stat">
-        <span>Total</span>
+        <span>Total de hoy</span>
         <strong id="alertTotal">0</strong>
       </div>
 
       <div class="alert-stat alert-stat-danger">
-        <span>Alta prioridad</span>
+        <span>Alta prioridad hoy</span>
         <strong id="alertHigh">0</strong>
       </div>
 
       <div class="alert-stat alert-stat-success">
-        <span>Resueltas</span>
+        <span>Resueltas hoy</span>
         <strong id="alertResolved">0</strong>
       </div>
 
@@ -86,8 +86,13 @@
             <option value="">Todos</option>
             <option value="face_recognized">Rostro reconocido</option>
             <option value="face_unknown">Rostro desconocido</option>
+            <option value="ppe_missing">Falta de EPP</option>
+            <option value="intrusion">Intrusion</option>
             <option value="authorized_object">Objeto autorizado</option>
-            <option value="dangerous_object">Objeto peligroso</option>
+            <option value="unauthorized_object">Objeto no autorizado</option>
+            <option value="dangerous_object">Objeto peligroso detectado</option>
+            <option value="fall_detected">Movimiento</option>
+            <option value="phone_usage">Distraccion</option>
             <option value="unauthorized_access">Acceso no autorizado</option>
           </select>
         </label>
@@ -118,12 +123,12 @@
               </th>
               <th>Tipo de alerta</th>
               <th>Descripción</th>
-              <th>Identificado</th>
-              <th>Detecciones</th>
-              <th>Usuario</th>
+              <th>Persona Identificada</th>
+              <th>Total de Detecciones</th>
               <th>Fecha/Hora</th>
               <th>Prioridad</th>
               <th>Estado</th>
+              <th>Correo</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -207,6 +212,11 @@
           Cerrar
         </button>
 
+        <button type="button" class="modal-btn modal-btn-email" id="retryEmailBtn" hidden>
+          <i class="fas fa-envelope"></i>
+          Reintentar correo
+        </button>
+
         <button type="button" class="modal-btn modal-btn-primary" id="resolveAlertBtn">
           Marcar como Resuelta
         </button>
@@ -231,6 +241,7 @@ document.addEventListener("DOMContentLoaded", function () {
     urls: {
       alerts: '{% url "get_security_events" %}',
       reviewTemplate: '{% url "review_security_event" event_id=0 %}',
+      retryEmailTemplate: '{% url "retry_incident_email" event_id=0 %}',
       resolveTemplate: '{% url "mark_event_resolved" event_id=0 %}'
     },
     priorities: {
@@ -244,10 +255,25 @@ document.addEventListener("DOMContentLoaded", function () {
         text: "MEDIO",
         icon: "fa-user-xmark"
       },
+      ppe_missing: {
+        className: "danger",
+        text: "ALTO",
+        icon: "fa-helmet-safety"
+      },
+      intrusion: {
+        className: "danger",
+        text: "ALTO",
+        icon: "fa-door-open"
+      },
       authorized_object: {
         className: "success",
         text: "BAJO",
         icon: "fa-circle-check"
+      },
+      unauthorized_object: {
+        className: "warning",
+        text: "MEDIO",
+        icon: "fa-ban"
       },
       dangerous_object: {
         className: "danger",
@@ -258,6 +284,16 @@ document.addEventListener("DOMContentLoaded", function () {
         className: "danger",
         text: "ALTO",
         icon: "fa-shield-halved"
+      },
+      fall_detected: {
+        className: "critical",
+        text: "CRITICO",
+        icon: "fa-person-falling"
+      },
+      phone_usage: {
+        className: "warning",
+        text: "MEDIO",
+        icon: "fa-mobile-screen-button"
       },
       critical: {
         className: "critical",
@@ -273,23 +309,43 @@ document.addEventListener("DOMContentLoaded", function () {
     types: {
       face_recognized: {
         icon: "fa-user-check",
-        label: "Rostro autorizado"
+        label: "Rostro reconocido"
       },
       face_unknown: {
         icon: "fa-user-xmark",
         label: "Rostro desconocido"
       },
+      ppe_missing: {
+        icon: "fa-helmet-safety",
+        label: "Falta de EPP"
+      },
+      intrusion: {
+        icon: "fa-door-open",
+        label: "Intrusion"
+      },
       authorized_object: {
         icon: "fa-circle-check",
         label: "Objeto autorizado"
       },
+      unauthorized_object: {
+        icon: "fa-ban",
+        label: "Objeto no autorizado"
+      },
       dangerous_object: {
         icon: "fa-triangle-exclamation",
-        label: "Objeto peligroso"
+        label: "Objeto peligroso detectado"
       },
       unauthorized_access: {
         icon: "fa-shield-halved",
         label: "Acceso no autorizado"
+      },
+      fall_detected: {
+        icon: "fa-person-falling",
+        label: "Movimiento"
+      },
+      phone_usage: {
+        icon: "fa-mobile-screen-button",
+        label: "Distraccion"
       },
       default: {
         icon: "fa-bell",
@@ -406,14 +462,10 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 }
 
-  function updateSummary(events) {
-    const total = events.length;
-    const high = events.filter(event => isHighPriority(event) && !event.resolved).length;
-    const resolved = events.filter(event => event.resolved).length;
-
-    document.getElementById("alertTotal").innerText = total;
-    document.getElementById("alertHigh").innerText = high;
-    document.getElementById("alertResolved").innerText = resolved;
+  function updateSummary(summary = {}) {
+    document.getElementById("alertTotal").innerText = Number(summary.total_today || 0);
+    document.getElementById("alertHigh").innerText = Number(summary.high_priority_today || 0);
+    document.getElementById("alertResolved").innerText = Number(summary.resolved_today || 0);
   }
 
   function getFilterValues() {
@@ -494,7 +546,6 @@ document.addEventListener("DOMContentLoaded", function () {
       eventMatchesFilters(event, filters)
     );
 
-    updateSummary(ALERT_SYSTEM.filteredAlerts);
     updateFilterButtonState();
     renderAlerts(ALERT_SYSTEM.filteredAlerts);
   }
@@ -530,6 +581,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         ALERT_SYSTEM.currentAlerts = events;
 
+        updateSummary(data.summary);
         applyFilters();
       })
       .catch(error => {
@@ -537,7 +589,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         document.getElementById("alertsContainer").innerHTML = `
           <tr>
-            <td colspan="10">
+            <td colspan="11">
               <div class="alerts-empty alerts-empty-danger">
                 <i class="fas fa-circle-exclamation"></i>
                 <span>Error al cargar alertas.</span>
@@ -557,7 +609,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (events.length === 0) {
       container.innerHTML = `
         <tr>
-            <td colspan="10">
+            <td colspan="11">
             <div class="alerts-empty">
               <i class="fas fa-check-circle"></i>
               <span>No hay alertas para mostrar.</span>
@@ -575,6 +627,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const type = getType(event.event_type);
       const statusText = event.resolved ? "Resuelta" : "Pendiente";
       const statusClass = event.resolved ? "completed" : "pending";
+      const emailStatuses = {
+        SENT: { text: "Enviado", className: "completed", icon: "fa-envelope-circle-check" },
+        FAILED: { text: "Fallido", className: "danger", icon: "fa-envelope-circle-xmark" },
+        SKIPPED: { text: "No aplica", className: "pending", icon: "fa-envelope" },
+        PENDING: { text: "Pendiente", className: "pending", icon: "fa-clock" }
+      };
+      const emailStatus = emailStatuses[event.email_status] || emailStatuses.PENDING;
       const canViewEvidence = Boolean(event.can_view_evidence);
       const canResolve = Boolean(event.can_resolve);
       const rowClass = canViewEvidence ? "alerts-row" : "alerts-row alerts-row--locked";
@@ -589,6 +648,12 @@ document.addEventListener("DOMContentLoaded", function () {
         ${canResolve ? `
           <button class="icon-action resolve-alert-row-btn" type="button" title="Resolver" data-id="${escapeAttr(event.id)}">
             <i class="fas fa-check"></i>
+          </button>
+        ` : ""}
+
+        ${event.can_retry_email ? `
+          <button class="icon-action retry-email-btn" type="button" title="Reintentar correo" data-id="${escapeAttr(event.id)}">
+            <i class="fas fa-envelope"></i>
           </button>
         ` : ""}
       `.trim();
@@ -625,10 +690,6 @@ document.addEventListener("DOMContentLoaded", function () {
           </td>
 
           <td>
-            <span class="alert-user">${escapeHtml(event.user || "Sistema")}</span>
-          </td>
-
-          <td>
             <span class="alert-date">${escapeHtml(event.timestamp || "")}</span>
           </td>
 
@@ -643,6 +704,13 @@ document.addEventListener("DOMContentLoaded", function () {
             <span class="status-badge status-${statusClass}">
               <i class="fas ${event.resolved ? "fa-check" : "fa-clock"}"></i>
               ${statusText}
+            </span>
+          </td>
+
+          <td>
+            <span class="status-badge status-${emailStatus.className}" title="${escapeAttr(event.email_error || "")}">
+              <i class="fas ${emailStatus.icon}"></i>
+              ${emailStatus.text}
             </span>
           </td>
 
@@ -678,6 +746,37 @@ document.addEventListener("DOMContentLoaded", function () {
         resolveCurrentAlert();
       });
     });
+
+    container.querySelectorAll(".retry-email-btn").forEach(button => {
+      button.addEventListener("click", function (event) {
+        event.stopPropagation();
+        retryIncidentEmail(this.dataset.id);
+      });
+    });
+  }
+
+  function retryIncidentEmail(alertId) {
+    const url = ALERT_SYSTEM.urls.retryEmailTemplate.replace("/0/", `/${alertId}/`);
+
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-CSRFToken": "{{ csrf_token }}"
+      },
+      body: new URLSearchParams({ csrfmiddlewaretoken: "{{ csrf_token }}" })
+    })
+    .then(async response => {
+      const data = await response.json();
+
+      if (data.event) replaceAlert(data.event);
+      applyFilters();
+
+      if (!response.ok) throw new Error(data.message || "No se pudo enviar el correo.");
+      return data;
+    })
+    .then(data => window.alert(data.message))
+    .catch(error => window.alert(error.message));
   }
 
   function showAlertDetail(alertId) {
@@ -761,17 +860,22 @@ document.addEventListener("DOMContentLoaded", function () {
       </div>
 
       <div class="info-line">
-        <span>Usuario</span>
-        <strong>${escapeHtml(alert.user || "Sistema")}</strong>
+        <span>Camara</span>
+        <strong>${escapeHtml(alert.camera || "Sin camara")}</strong>
       </div>
 
       <div class="info-line">
-        <span>Identificado</span>
+        <span>Ubicacion</span>
+        <strong>${escapeHtml(alert.location || "Por definir")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Persona Identificada</span>
         <strong>${escapeHtml(alert.identified_person || "No identificado")}</strong>
       </div>
 
       <div class="info-line">
-        <span>Detecciones</span>
+        <span>Total de Detecciones</span>
         <strong>${Number(alert.detection_count || 0)}</strong>
       </div>
 
@@ -785,11 +889,39 @@ document.addEventListener("DOMContentLoaded", function () {
         <strong>${escapeHtml(alert.managed_by || "Sin gestion")}</strong>
       </div>
 
+      <div class="info-line">
+        <span>Estado del correo</span>
+        <strong>${escapeHtml(alert.email_status_display || "Pendiente")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Destinatario</span>
+        <strong>${escapeHtml(alert.email_recipient || "Sin destinatario")}</strong>
+      </div>
+
+      <div class="info-line">
+        <span>Correo enviado</span>
+        <strong>${escapeHtml(alert.email_sent_at || "No enviado")}</strong>
+      </div>
+
+      ${alert.email_error ? `
+        <div class="info-line info-line-column">
+          <span>Error de correo</span>
+          <strong>${escapeHtml(alert.email_error)}</strong>
+        </div>
+      ` : ""}
+
       <div class="info-line info-line-column">
         <span>Descripción</span>
         <strong>${escapeHtml(alert.details || "No hay detalles adicionales.")}</strong>
       </div>
     `;
+
+    const locationBox = document.querySelector(".alert-location-box span");
+
+    if (locationBox) {
+      locationBox.innerText = alert.camera || "Sin camara";
+    }
 
     const mediaContent = document.getElementById("alertMediaContent");
 
@@ -807,6 +939,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     const resolveButton = document.getElementById("resolveAlertBtn");
+    const retryEmailButton = document.getElementById("retryEmailBtn");
+
+    if (retryEmailButton) {
+      retryEmailButton.hidden = !alert.can_retry_email;
+      retryEmailButton.disabled = false;
+      retryEmailButton.innerHTML = '<i class="fas fa-envelope"></i> Reintentar correo';
+    }
 
     if (!alert.can_manage) {
       resolveButton.style.display = "none";
@@ -947,10 +1086,30 @@ document.addEventListener("DOMContentLoaded", function () {
     resolveButton.addEventListener("click", resolveCurrentAlert);
   }
 
+  const retryEmailButton = document.getElementById("retryEmailBtn");
+
+  if (retryEmailButton) {
+    retryEmailButton.addEventListener("click", function () {
+      if (!ALERT_SYSTEM.currentAlertId) return;
+
+      this.disabled = true;
+      this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+
+      retryIncidentEmail(ALERT_SYSTEM.currentAlertId)
+        .finally(() => {
+          const updatedAlert = ALERT_SYSTEM.currentAlerts.find(
+            item => String(item.id) === String(ALERT_SYSTEM.currentAlertId)
+          );
+
+          if (updatedAlert) renderAlertDetail(updatedAlert);
+        });
+    });
+  }
+
   loadAlerts();
   updateTimestamp();
 
-  setInterval(loadAlerts, 5000);
+  setInterval(loadAlerts, {{ events_refresh_ms|default:5000 }});
 });
 </script>
 {% endblock javascripts %}

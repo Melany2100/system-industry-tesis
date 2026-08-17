@@ -3406,11 +3406,13 @@ def get_security_events(request):
         ).count(),
     }
     user_authorized_person = get_authorized_person_for_user(request.user)
-    scanned_events = list(events[:50])
+    scanned_events = list(events[:max_events_to_scan])
     detection_counts = _detection_counts_for_people([event.authorized_person_id for event in scanned_events])
 
-    events_data = [
-        _event_payload(
+    events_data = []
+
+    for event in scanned_events:
+        payload = _event_payload(
             event,
             request_user=request.user,
             user_authorized_person=user_authorized_person,
@@ -3425,7 +3427,10 @@ def get_security_events(request):
         if len(events_data) >= 50:
             break
 
-    return JsonResponse({"events": events_data, "summary": daily_summary})
+    return JsonResponse({
+        "events": events_data,
+        "summary": daily_summary,
+    })
 
 
 @login_required(login_url="/login/")

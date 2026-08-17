@@ -1193,7 +1193,6 @@ def _preload_camera_models_task():
         _load_risk_yolo_detector()
         _load_vision_event_detector()
         _load_ppe_model()
-        _load_risk_object_model()
         _load_face_recognition()
         _log_line("Modelos de camara precargados", key="models_preloaded", throttle_sec=10)
     finally:
@@ -1233,7 +1232,6 @@ def _attach_preloaded_models():
         _RISK_YOLO_CACHE["detector"],
         _PPE_CACHE["model"],
         _FACE_RECOGNITION_CACHE["module"],
-        _RISK_OBJECT_CACHE["model"],
     )
 
 
@@ -1586,9 +1584,14 @@ def _get_local_camera_backend_candidates(cv2_module):
     return candidates or [("DEFAULT", None)]
 
 
-def _open_local_camera(cv2, camera_source: int, camera_name: str, target_fps: int):
+def _open_local_camera(cv2_module, camera_source: int, camera_name: str, target_fps: int):
+    if cv2_module is None:
+        raise RuntimeError(
+            "OpenCV no está disponible. Verifica la instalación de opencv-python."
+        )
+
     if os.name == "nt":
-        backend_candidates = _get_local_camera_backend_candidates(cv2)
+        backend_candidates = _get_local_camera_backend_candidates(cv2_module)
     else:
         backend_candidates = [("DEFAULT", None)]
 
@@ -1598,30 +1601,47 @@ def _open_local_camera(cv2, camera_source: int, camera_name: str, target_fps: in
             key=f"local_camera_open_{camera_name}_{backend_name}",
             throttle_sec=10,
         )
-        if backend is None:
-            cap = cv2.VideoCapture(camera_source)
-        else:
-            cap = cv2.VideoCapture(camera_source, backend)
 
-        fourcc_name = str(getattr(settings, "LOCAL_CAMERA_FOURCC", "MJPG"))[:4]
+        if backend is None:
+            cap = cv2_module.VideoCapture(camera_source)
+        else:
+            cap = cv2_module.VideoCapture(camera_source, backend)
+
+        fourcc_name = str(
+            getattr(settings, "LOCAL_CAMERA_FOURCC", "MJPG")
+        )[:4]
+
         if len(fourcc_name) == 4:
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc_name))
+            cap.set(
+                cv2_module.CAP_PROP_FOURCC,
+                cv2_module.VideoWriter_fourcc(*fourcc_name),
+            )
+
         cap.set(
-            cv2.CAP_PROP_FRAME_WIDTH,
-            max(640, int(getattr(settings, "LOCAL_CAMERA_CAPTURE_WIDTH", 1920))),
+            cv2_module.CAP_PROP_FRAME_WIDTH,
+            max(
+                640,
+                int(getattr(settings, "LOCAL_CAMERA_CAPTURE_WIDTH", 1920)),
+            ),
         )
+
         cap.set(
-            cv2.CAP_PROP_FRAME_HEIGHT,
-            max(480, int(getattr(settings, "LOCAL_CAMERA_CAPTURE_HEIGHT", 1080))),
+            cv2_module.CAP_PROP_FRAME_HEIGHT,
+            max(
+                480,
+                int(getattr(settings, "LOCAL_CAMERA_CAPTURE_HEIGHT", 1080)),
+            ),
         )
+
         cap.set(
-            cv2.CAP_PROP_FPS,
+            cv2_module.CAP_PROP_FPS,
             max(
                 int(target_fps),
                 int(getattr(settings, "LOCAL_CAMERA_CAPTURE_FPS", 15)),
             ),
         )
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        cap.set(cv2_module.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened():
             cap.release()
@@ -1629,10 +1649,13 @@ def _open_local_camera(cv2, camera_source: int, camera_name: str, target_fps: in
 
         ok, frame = False, None
         warmup_deadline = time.monotonic() + 1.5
+
         while time.monotonic() < warmup_deadline:
             ok, frame = cap.read()
+
             if ok and frame is not None and getattr(frame, "size", 0):
                 break
+
             time.sleep(0.03)
 
         if ok and frame is not None and getattr(frame, "size", 0):
@@ -1652,9 +1675,17 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
     cv2_module = _safe_import_cv2()
     np = _safe_import_numpy()
 
-    if cv2 is None or np is None:
-        _log_line("âŒ Falta cv2 o numpy", key="deps_missing", throttle_sec=5)
+    if cv2_module is None or np is None:
+        _log_line(
+            "Falta cv2 o numpy",
+            key="deps_missing",
+            throttle_sec=5,
+        )
         return
+
+    # Compatibilidad con el código existente del pipeline,
+    # que todavía utiliza cv2 directamente en varias secciones.
+    cv2 = cv2_module
 
     preload_camera_models(async_load=True)
     risk_yolo_detector = None

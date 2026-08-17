@@ -22,6 +22,6 @@ if errorlevel 1 (
 )
 
 echo [SMRI] Iniciando servidor con autoinicio de camaras...
-python manage.py runserver 0.0.0.0:8000
+python manage.py runserver 0.0.0.0:8000 --noreload
 
 pause

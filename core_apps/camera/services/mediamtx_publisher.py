@@ -106,7 +106,7 @@ class MediaMTXPublisher:
                 self._command(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=None,
                 creationflags=creationflags,
             )
         except OSError as exc:

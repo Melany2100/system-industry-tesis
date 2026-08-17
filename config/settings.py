@@ -107,6 +107,24 @@ MEDIAMTX_PUBLISH_BASE_URL = os.getenv(
 ).strip().rstrip("/")
 FFMPEG_BINARY = os.getenv("FFMPEG_BINARY", "ffmpeg").strip() or "ffmpeg"
 
+# Canal HTTPS para replicar los eventos creados por el nodo edge. El mismo token
+# secreto debe configurarse en ambos nodos, pero nunca guardarse en Git.
+SMRI_EVENT_SYNC_URL = os.getenv("SMRI_EVENT_SYNC_URL", "").strip()
+SMRI_EVENT_SYNC_TOKEN = os.getenv("SMRI_EVENT_SYNC_TOKEN", "").strip()
+SMRI_EDGE_NODE_ID = os.getenv("SMRI_EDGE_NODE_ID", "edge-main").strip() or "edge-main"
+SMRI_EVENT_SYNC_INTERVAL_SECONDS = max(
+    1.0,
+    env_float("SMRI_EVENT_SYNC_INTERVAL_SECONDS", 3.0),
+)
+SMRI_EVENT_SYNC_TIMEOUT_SECONDS = max(
+    2.0,
+    env_float("SMRI_EVENT_SYNC_TIMEOUT_SECONDS", 15.0),
+)
+SMRI_EVENT_SYNC_BATCH_SIZE = max(
+    1,
+    min(env_int("SMRI_EVENT_SYNC_BATCH_SIZE", 10), 100),
+)
+
 
 # ============================================================
 # CRITERIOS OPERATIVOS DEL SISTEMA

@@ -222,6 +222,13 @@ class SecurityEvent(models.Model):
     confidence = models.FloatField(blank=True, null=True)
     duration_seconds = models.PositiveIntegerField(default=0)
     should_alert = models.BooleanField(default=True)
+    source_event_key = models.CharField(
+        max_length=180,
+        blank=True,
+        null=True,
+        unique=True,
+        help_text="Identificador idempotente asignado por el nodo edge de origen.",
+    )
 
     class Meta:
         ordering = ["-timestamp"]
@@ -248,6 +255,45 @@ class SecurityEvent(models.Model):
             return full_name if full_name else self.related_user.username
 
         return "Desconocido/a"
+
+
+class EventSyncOutbox(models.Model):
+    """Cola persistente de eventos pendientes de enviar al nodo cloud."""
+
+    STATUS_PENDING = "PENDING"
+    STATUS_RETRY = "RETRY"
+    STATUS_SYNCED = "SYNCED"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "Pendiente"),
+        (STATUS_RETRY, "Reintentar"),
+        (STATUS_SYNCED, "Sincronizado"),
+    )
+
+    event = models.OneToOneField(
+        SecurityEvent,
+        on_delete=models.CASCADE,
+        related_name="sync_outbox",
+    )
+    source_key = models.CharField(max_length=180, unique=True)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_error = models.TextField(blank=True, default="")
+    synced_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("next_attempt_at", "id")
+        verbose_name = "Evento pendiente de sincronización"
+        verbose_name_plural = "Eventos pendientes de sincronización"
+
+    def __str__(self):
+        return f"{self.source_key} - {self.status}"
 
 
 class DetectionFunction(models.Model):

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 
@@ -20,6 +21,7 @@ class MediaMTXPublisher:
     def __init__(self, stream_path: str, fps: int):
         base_url = settings.MEDIAMTX_PUBLISH_BASE_URL.rstrip("/")
         self.output_url = f"{base_url}/{stream_path}"
+        self.display_url = self._redacted_url(self.output_url)
         self.fps = max(1, min(int(fps), 30))
         self.ffmpeg_binary = settings.FFMPEG_BINARY
 
@@ -39,7 +41,7 @@ class MediaMTXPublisher:
             logger.error(
                 "No se encontró FFmpeg (%s); el stream %s no se publicará.",
                 self.ffmpeg_binary,
-                self.output_url,
+                self.display_url,
             )
             return
         self._thread.start()
@@ -99,6 +101,17 @@ class MediaMTXPublisher:
             self.output_url,
         ]
 
+    @staticmethod
+    def _redacted_url(url: str) -> str:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname or ""
+        if parsed.port:
+            hostname = f"{hostname}:{parsed.port}"
+        netloc = hostname
+        if parsed.username:
+            netloc = f"{parsed.username}:***@{hostname}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
     def _start_process(self) -> Optional[subprocess.Popen]:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
@@ -110,12 +123,12 @@ class MediaMTXPublisher:
                 creationflags=creationflags,
             )
         except OSError as exc:
-            logger.error("No se pudo iniciar FFmpeg para %s: %s", self.output_url, exc)
+            logger.error("No se pudo iniciar FFmpeg para %s: %s", self.display_url, exc)
             return None
 
         with self._process_lock:
             self._process = process
-        logger.info("Publicación MediaMTX iniciada: %s", self.output_url)
+        logger.info("Publicación MediaMTX iniciada: %s", self.display_url)
         return process
 
     def _terminate_process(self) -> None:
@@ -170,7 +183,7 @@ class MediaMTXPublisher:
                 process.stdin.write(frame)
                 process.stdin.flush()
             except (BrokenPipeError, OSError) as exc:
-                logger.warning("MediaMTX desconectado (%s): %s", self.output_url, exc)
+                logger.warning("MediaMTX desconectado (%s): %s", self.display_url, exc)
                 self._terminate_process()
                 process = None
 

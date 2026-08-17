@@ -20,8 +20,10 @@ class CameraConfig(AppConfig):
             return
 
         try:
+            from .services.event_sync import start_event_sync_worker
             from .views import autostart_active_camera_workers, preload_camera_models
 
+            start_event_sync_worker()
             preload_camera_models(async_load=True)
 
             if os.environ.get("SMRI_AUTOSTART_CAMERAS", "1") != "0":

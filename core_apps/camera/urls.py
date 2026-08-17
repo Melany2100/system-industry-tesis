@@ -10,6 +10,7 @@ urlpatterns = [
     path("video_feed/<int:camera_id>/", views.video_feed, name="video_feed_camera"),
     
     path("live_status/", views.live_status, name="live_status"),
+    path("api/v1/events/", views.ingest_edge_event, name="ingest_edge_event"),
 
     path("register_face/", views.register_face, name="register_face"),
     path("get_events/", views.get_events, name="get_events"),

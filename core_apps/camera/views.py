@@ -25,6 +25,7 @@ from django.views.generic import TemplateView
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .models import AuthorizedPerson, SecurityEvent, Camera
+from core_apps.camera.services.event_sync import ingest_edge_event
 from core_apps.camera.utils import (
     can_save_event,
     create_security_event,
@@ -984,6 +985,7 @@ def _log_line(message: str, key: str | None = None, throttle_sec: float = 0.0) -
         })
 
 
+@login_required(login_url="/login/")
 def live_status(request):
     """Devuelve logs nuevos usando ?after="""
     try:
@@ -991,10 +993,28 @@ def live_status(request):
     except ValueError:
         after = 0
 
-    with _LOG_LOCK:
-        last_id = _LOG_SEQ
-        lines = [x for x in _LIVE_LOG if x["id"] > after]
-        lines = lines[-80:]
+    if not _edge_runtime_enabled():
+        events = list(
+            _filtered_security_events_queryset(request)
+            .filter(pk__gt=after)
+            .order_by("-pk")[:80]
+        )
+        events.reverse()
+        lines = [
+            {
+                "id": event.pk,
+                "ts": timezone.localtime(event.timestamp).strftime("%H:%M:%S"),
+                "msg": f"{event.get_event_type_display()}: {event.details}",
+                "kind": _live_log_kind(event.details),
+            }
+            for event in events
+        ]
+        last_id = lines[-1]["id"] if lines else after
+    else:
+        with _LOG_LOCK:
+            last_id = _LOG_SEQ
+            lines = [x for x in _LIVE_LOG if x["id"] > after]
+            lines = lines[-80:]
 
     return JsonResponse({"lines": lines, "last_id": last_id})
 
@@ -2124,7 +2144,7 @@ def _run_camera_pipeline(camera: Camera, target_fps: int = 10, emit_jpeg=None, s
                             event_key = f"unauthorized_face_event_{camera.id}"
                             if can_save_event(event_key, seconds=30):
                                 try:
-                                    create_security_event(
+                                    event = create_security_event(
                                         event_type="intrusion",
                                         details="Persona no autorizada detectada en el Ã¡rea monitoreada",
                                         frame=evidence_frame.copy(),

@@ -549,9 +549,28 @@ def create_security_event(
                 evidencia=image_path
             )
             _apply_incident_email_policy(event)
+            if getattr(settings, "SMRI_EDGE_ENABLED", False):
+                # La fila de salida solo se crea cuando la transacción del evento
+                # termina correctamente. Así una caída de Internet no pierde
+                # la detección ni bloquea el procesamiento de video.
+                transaction.on_commit(
+                    lambda event_id=event.pk: _enqueue_event_for_cloud(event_id)
+                )
 
         return event
 
     except Exception as e:
         print(f"[ERROR] No se pudo crear evento/informe: {e}")
         return None
+
+
+def _enqueue_event_for_cloud(event_id):
+    try:
+        from core_apps.camera.services.event_sync import enqueue_security_event
+
+        enqueue_security_event(event_id)
+    except Exception as exc:
+        # El evento ya está guardado localmente. El comando
+        # sync_security_events --backfill permite reconstruir la cola si esta
+        # operación llegara a fallar.
+        print(f"[WARN] No se pudo encolar el evento {event_id}: {exc}")

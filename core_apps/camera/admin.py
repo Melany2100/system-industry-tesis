@@ -1,6 +1,12 @@
 from django import forms
 from django.contrib import admin
-from .models import AuthorizedPerson, Camera, DetectionFunction, SecurityEvent
+from .models import (
+    AuthorizedPerson,
+    Camera,
+    DetectionFunction,
+    EventSyncOutbox,
+    SecurityEvent,
+)
 
 
 DETECTION_RULE_CHOICES = (
@@ -196,4 +202,31 @@ class SecurityEventAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         """El historial solo contiene evidencia producida por los detectores."""
+        return False
+
+
+@admin.register(EventSyncOutbox)
+class EventSyncOutboxAdmin(admin.ModelAdmin):
+    list_display = (
+        "source_key",
+        "status",
+        "attempts",
+        "next_attempt_at",
+        "synced_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("source_key", "last_error")
+    readonly_fields = (
+        "event",
+        "source_key",
+        "status",
+        "attempts",
+        "next_attempt_at",
+        "last_error",
+        "synced_at",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
         return False

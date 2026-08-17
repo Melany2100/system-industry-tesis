@@ -4,11 +4,11 @@ Esta preparación separa dos responsabilidades:
 
 - **DigitalOcean:** Django, PostgreSQL, Nginx y MediaMTX. No instala OpenCV,
   Ultralytics ni modelos de IA.
-- **Máquina local:** abre las cámaras, ejecuta la detección y publica el video
-  ya procesado hacia MediaMTX mediante FFmpeg.
+- **Máquina local:** abre las cámaras, ejecuta la detección, publica el video
+  procesado hacia MediaMTX y replica los eventos por una API HTTPS autenticada.
 
-El envío de eventos locales al servidor queda expresamente fuera de este
-despliegue inicial.
+Los eventos se guardan primero en PostgreSQL local. Una cola durable los envía
+a DigitalOcean y reintenta con espera exponencial si la red se interrumpe.
 
 ## 1. Crear el Droplet y preparar DNS
 
@@ -73,6 +73,13 @@ con:
 
 ```bash
 /opt/smri/.venv/bin/python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+Genera también el token de sincronización y colócalo como
+`SMRI_EVENT_SYNC_TOKEN` en el `.env` de la VPS y de la máquina local:
+
+```bash
+openssl rand -hex 32
 ```
 
 Luego prepara Django:
@@ -157,10 +164,13 @@ configura:
 ```dotenv
 MEDIAMTX_PUBLISH_BASE_URL=rtsp://publisher:TU_PASSWORD@IP_PUBLICA_DROPLET:8554
 FFMPEG_BINARY=ffmpeg
+SMRI_EVENT_SYNC_URL=https://app.midominio.com/camera/api/v1/events/
+SMRI_EVENT_SYNC_TOKEN=EL_MISMO_TOKEN_DE_LA_VPS
+SMRI_EDGE_NODE_ID=planta-principal
 ```
 
 Ese archivo usa PostgreSQL local. No sustituyas `DB_HOST` por la IP del Droplet:
-en esta fase los eventos deben permanecer en la máquina de detección.
+los eventos se replican por HTTPS y el puerto 5432 debe seguir cerrado.
 
 Registra también las cámaras en Django cloud y usa el mismo `stream_path` en
 ambos nodos. Si se deja vacío, se publica automáticamente como `camera-1`,
@@ -186,8 +196,14 @@ Después de iniciar la publicación local, la API de MediaMTX debe mostrar la ru
 `camera-ID` o el `stream_path` elegido. Al entrar como administrador en Django,
 el apartado Cámaras reproducirá esa ruta por WebRTC.
 
-## Pendiente deliberado
+Para comprobar o incorporar eventos locales anteriores, ejecuta en la máquina
+edge (por ejemplo, los 20 más recientes):
 
-Esta fase **no implementa ni configura el envío de eventos de detección desde la
-máquina local hacia DigitalOcean**. Ese canal debe añadirse después mediante una
-API autenticada y una cola local de reintentos; no conviene exponer PostgreSQL.
+```powershell
+python manage.py sync_security_events --backfill 20 --limit 20
+```
+
+El resultado debe indicar `Sincronizados: 20` o la cantidad disponible. Si un
+envío falla, consulta en el admin local **Eventos pendientes de sincronización**;
+el campo `last_error` conserva el motivo y el proceso vuelve a intentarlo sin
+bloquear la cámara.

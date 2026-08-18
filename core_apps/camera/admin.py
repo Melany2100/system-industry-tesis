@@ -203,11 +203,6 @@ class SecurityEventAdmin(admin.ModelAdmin):
         'email_error',
     )
 
-    def has_add_permission(self, request):
-        """El historial solo contiene evidencia producida por los detectores."""
-        return False
-
-
 @admin.register(EventSyncOutbox)
 class EventSyncOutboxAdmin(admin.ModelAdmin):
     list_display = (

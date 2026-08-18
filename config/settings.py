@@ -125,6 +125,17 @@ SMRI_EVENT_SYNC_BATCH_SIZE = max(
     min(env_int("SMRI_EVENT_SYNC_BATCH_SIZE", 10), 100),
 )
 
+# El formulario se presenta en cloud, mientras el nodo edge descarga las fotos
+# y genera localmente los vectores faciales. Si no se define una URL explícita,
+# se deriva de la API de eventos.
+SMRI_PERSON_SYNC_URL = os.getenv("SMRI_PERSON_SYNC_URL", "").strip()
+if not SMRI_PERSON_SYNC_URL and SMRI_EVENT_SYNC_URL.endswith("/events/"):
+    SMRI_PERSON_SYNC_URL = SMRI_EVENT_SYNC_URL[:-7] + "authorized-people/"
+SMRI_PERSON_SYNC_INTERVAL_SECONDS = max(
+    5.0,
+    env_float("SMRI_PERSON_SYNC_INTERVAL_SECONDS", 15.0),
+)
+
 
 # ============================================================
 # CRITERIOS OPERATIVOS DEL SISTEMA

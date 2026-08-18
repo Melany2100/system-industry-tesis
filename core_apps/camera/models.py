@@ -22,6 +22,11 @@ class AuthorizedPerson(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    source_updated_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Versión del registro recibido desde el nodo cloud.",
+    )
 
     class Meta:
         ordering = ["nombres", "apellidos"]

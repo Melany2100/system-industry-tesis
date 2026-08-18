@@ -167,10 +167,23 @@ FFMPEG_BINARY=ffmpeg
 SMRI_EVENT_SYNC_URL=https://app.midominio.com/camera/api/v1/events/
 SMRI_EVENT_SYNC_TOKEN=EL_MISMO_TOKEN_DE_LA_VPS
 SMRI_EDGE_NODE_ID=planta-principal
+SMRI_PERSON_SYNC_URL=https://app.midominio.com/camera/api/v1/authorized-people/
+SMRI_PERSON_SYNC_INTERVAL_SECONDS=15
 ```
 
 Ese archivo usa PostgreSQL local. No sustituyas `DB_HOST` por la IP del Droplet:
 los eventos se replican por HTTPS y el puerto 5432 debe seguir cerrado.
+
+El registro de personal se realiza desde la web cloud. La VPS guarda los datos
+y la fotografía; el nodo edge consulta la API de personal, descarga la foto y
+genera localmente el `face_encoding`. De esta forma la VPS no instala dlib ni
+ejecuta reconocimiento facial.
+
+Para forzar una comprobación desde la PC local:
+
+```powershell
+python manage.py sync_authorized_people
+```
 
 Registra también las cámaras en Django cloud y usa el mismo `stream_path` en
 ambos nodos. Si se deja vacío, se publica automáticamente como `camera-1`,

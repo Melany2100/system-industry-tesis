@@ -26,6 +26,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .models import AuthorizedPerson, SecurityEvent, Camera
 from core_apps.camera.services.event_sync import ingest_edge_event
+from core_apps.camera.services.person_sync import (
+    authorized_people_manifest,
+    authorized_person_image,
+)
 from core_apps.camera.utils import (
     can_save_event,
     create_security_event,
@@ -3213,9 +3217,6 @@ def register_face(request):
     if not is_admin_user(request.user):
         return _json_forbidden("Solo un administrador puede registrar rostros autorizados.")
 
-    if not _edge_runtime_enabled():
-        return _edge_runtime_unavailable_response()
-
     if request.method != "POST":
         return JsonResponse(
             {"success": False, "message": "MÃ©todo no permitido."},
@@ -3224,7 +3225,7 @@ def register_face(request):
 
     try:
         face_recognition = _safe_import_face_recognition()
-        if face_recognition is None:
+        if _edge_runtime_enabled() and face_recognition is None:
             return JsonResponse(
                 {
                     "success": False,
@@ -3300,6 +3301,46 @@ def register_face(request):
                     "message": "El archivo seleccionado no es una imagen vÃ¡lida. Usa JPG, PNG o WEBP."
                 },
                 status=400
+            )
+
+        if not _edge_runtime_enabled():
+            normalized_file = ContentFile(
+                normalized_bytes,
+                name="authorized_face.jpg",
+            )
+            face_image_path = save_authorized_face_image(normalized_file, correo)
+            if not face_image_path:
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "message": "No se pudo guardar la fotografía en el servidor.",
+                    },
+                    status=500,
+                )
+            with transaction.atomic():
+                person, created = AuthorizedPerson.objects.update_or_create(
+                    correo=correo,
+                    defaults={
+                        "nombres": nombres,
+                        "apellidos": apellidos,
+                        "celular": celular,
+                        "cargo": cargo,
+                        "face_encoding": "",
+                        "face_image_path": face_image_path,
+                        "registered_by": request.user,
+                        "is_active": True,
+                        "source_updated_at": None,
+                    },
+                )
+            action = "registrado" if created else "actualizado"
+            return JsonResponse(
+                {
+                    "success": True,
+                    "message": (
+                        f"Personal {action} correctamente. La PC local procesará "
+                        "el rostro automáticamente en unos segundos."
+                    ),
+                }
             )
 
         image_data = face_recognition.load_image_file(BytesIO(normalized_bytes))

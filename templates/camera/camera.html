@@ -191,7 +191,7 @@
         </div>
       </div>
 
-      {% if request.user.is_authenticated and edge_runtime_enabled %}
+      {% if request.user.is_authenticated %}
       <div class="dashboard-card personnel-registration-card">
         <div class="personnel-registration-content">
           <div>
@@ -211,7 +211,7 @@
   </div>
 </div>
 
-{% if request.user.is_authenticated and edge_runtime_enabled %}
+{% if request.user.is_authenticated %}
 <!-- MODAL REGISTRO DE PERSONAL -->
 <div class="modal fade" id="personnelRegistrationModal" tabindex="-1" aria-labelledby="personnelRegistrationTitle" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable personnel-registration-dialog">

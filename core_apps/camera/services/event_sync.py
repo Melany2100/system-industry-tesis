@@ -263,7 +263,7 @@ def _post_float(value: str | None) -> float | None:
         return None
 
 
-def _authorized_request(request) -> bool:
+def is_sync_request_authorized(request) -> bool:
     expected = settings.SMRI_EVENT_SYNC_TOKEN
     supplied = request.headers.get("Authorization", "")
     if supplied.startswith("Bearer "):
@@ -304,7 +304,7 @@ def ingest_edge_event(request):
         return JsonResponse({"success": False, "error": "cloud_only"}, status=404)
     if not settings.SMRI_EVENT_SYNC_TOKEN:
         return JsonResponse({"success": False, "error": "sync_not_configured"}, status=503)
-    if not _authorized_request(request):
+    if not is_sync_request_authorized(request):
         return JsonResponse({"success": False, "error": "unauthorized"}, status=401)
 
     source_key = (

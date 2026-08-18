@@ -111,6 +111,9 @@ class AuthorizedPersonAdmin(admin.ModelAdmin):
         "cargo",
     )
     readonly_fields = (
+        "face_encoding",
+        "face_image_path",
+        "source_updated_at",
         "created_at",
         "updated_at",
     )

@@ -11,6 +11,16 @@ urlpatterns = [
     
     path("live_status/", views.live_status, name="live_status"),
     path("api/v1/events/", views.ingest_edge_event, name="ingest_edge_event"),
+    path(
+        "api/v1/authorized-people/",
+        views.authorized_people_manifest,
+        name="authorized_people_manifest",
+    ),
+    path(
+        "api/v1/authorized-people/<int:person_id>/image/",
+        views.authorized_person_image,
+        name="authorized_person_image",
+    ),
 
     path("register_face/", views.register_face, name="register_face"),
     path("get_events/", views.get_events, name="get_events"),
